@@ -1,0 +1,19 @@
+{
+  "functions": {
+    "api/places.ts": {
+      "includeFiles": "src/data/places.json"
+    }
+  },
+  "rewrites": [
+    { "source": "/pflege", "destination": "/index.html" },
+    { "source": "/pflege/", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Content-Security-Policy", "value": "frame-ancestors https://imwalgau.at https://www.imwalgau.at" }
+      ]
+    }
+  ]
+}
