@@ -256,7 +256,7 @@ function App() {
 }
 
 function PlaceCard({ place, onClose }: { place: Place; onClose: () => void }) {
-  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${place.coordinates[1]},${place.coordinates[0]}`;
+  const mapUrl = place.googleMapsUrl ?? `https://www.google.com/maps/search/?api=1&query=${place.coordinates[1]},${place.coordinates[0]}`;
   return (
     <aside className="absolute bottom-4 left-2 right-2 z-20 mx-auto max-w-md overflow-hidden rounded-2xl bg-white shadow-[0_18px_55px_rgba(18,54,45,.35)] md:bottom-6 md:left-2 md:right-auto md:w-[380px]">
       {place.imageUrl && <img src={place.imageUrl} alt="" className="h-44 w-full object-cover" />}

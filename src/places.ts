@@ -38,6 +38,7 @@ export type PlaceRecord = {
   geometry?: "point" | "area";
   description?: string;
   imageUrl?: string;
+  googleMapsUrl?: string;
   coordinates?: [number, number];
   polygon?: [number, number][];
 };
@@ -97,4 +98,3 @@ export function normalizePlaces(records: PlaceRecord[]): Place[] {
     geometry: place.geometry ?? "point",
   }));
 }
-

@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent } from "react";
 import {
   AlertCircle,
   Check,
   ChevronLeft,
+  Image,
   Loader2,
   LogOut,
   MapPin,
@@ -10,6 +11,8 @@ import {
   Save,
   Search,
   Trash2,
+  Upload,
+  X,
 } from "lucide-react";
 import {
   Map,
@@ -43,6 +46,21 @@ const iconLabels = {
   family: "Familie & Spiel",
   culture: "Geschichte & Kultur",
 } as const;
+
+function parsePastedCoordinates(value: string): [number, number] | null {
+  const matches = value.trim().match(/[+-]?(?:\d+(?:\.\d+)?|\.\d+)/g);
+  if (matches?.length !== 2) return null;
+
+  const [latitude, longitude] = matches.map(Number);
+  if (
+    !Number.isFinite(latitude)
+    || !Number.isFinite(longitude)
+    || Math.abs(latitude) > 90
+    || Math.abs(longitude) > 180
+  ) return null;
+
+  return [longitude, latitude];
+}
 
 async function responseJson<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({})) as T & { error?: string };
@@ -183,6 +201,13 @@ function PlaceForm({
     onChange({ coordinates: next });
   };
 
+  const pasteCoordinates = (event: ClipboardEvent<HTMLInputElement>) => {
+    const next = parsePastedCoordinates(event.clipboardData.getData("text"));
+    if (!next) return;
+    event.preventDefault();
+    onChange({ coordinates: next });
+  };
+
   return (
     <div className="admin-form">
       <div className="admin-form-heading">
@@ -258,23 +283,125 @@ function PlaceForm({
       <div className="admin-field-grid">
         <label>
           <span>Längengrad</span>
-          <input type="number" step="0.000001" value={coordinates[0]} onChange={(event) => setCoordinate(0, event.target.value)} />
+          <input
+            type="number"
+            step="0.000001"
+            value={coordinates[0]}
+            onChange={(event) => setCoordinate(0, event.target.value)}
+            onPaste={pasteCoordinates}
+          />
         </label>
         <label>
           <span>Breitengrad</span>
-          <input type="number" step="0.000001" value={coordinates[1]} onChange={(event) => setCoordinate(1, event.target.value)} />
+          <input
+            type="number"
+            step="0.000001"
+            value={coordinates[1]}
+            onChange={(event) => setCoordinate(1, event.target.value)}
+            onPaste={pasteCoordinates}
+          />
         </label>
       </div>
 
       <label>
-        <span>Bild-URL</span>
-        <input type="url" value={place.imageUrl ?? ""} placeholder="https://…" onChange={(event) => onChange({ imageUrl: event.target.value || undefined })} />
+        <span>Google-Maps-Link <small>optional</small></span>
+        <input
+          type="url"
+          value={place.googleMapsUrl ?? ""}
+          placeholder="https://www.google.com/maps/…"
+          onChange={(event) => onChange({ googleMapsUrl: event.target.value.trim() || undefined })}
+        />
       </label>
+      <div className="admin-link-actions">
+        <a
+          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.name}, ${place.municipality}`)}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Ort in Google Maps suchen
+        </a>
+        {place.googleMapsUrl && <a href={place.googleMapsUrl} target="_blank" rel="noreferrer">Gespeicherten Link prüfen</a>}
+      </div>
+
+      <ImageUpload
+        placeId={place.id ?? "neu"}
+        imageUrl={place.imageUrl}
+        onChange={(imageUrl) => onChange({ imageUrl })}
+      />
 
       {place.geometry === "area" && (
         <p className="admin-hint">Bei Flächen wird hier der Mittelpunkt verschoben. Ein vorhandenes Polygon bleibt unverändert.</p>
       )}
     </div>
+  );
+}
+
+function ImageUpload({
+  placeId,
+  imageUrl,
+  onChange,
+}: {
+  placeId: string;
+  imageUrl?: string;
+  onChange: (imageUrl: string | undefined) => void;
+}) {
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState("");
+  const inputId = `place-image-${placeId}`;
+
+  const upload = async (file: File | undefined) => {
+    if (!file) return;
+    setUploading(true);
+    setError("");
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const result = await responseJson<{ url: string }>(await fetch("/api/image", {
+        method: "POST",
+        body: form,
+      }));
+      onChange(result.url);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Upload fehlgeschlagen.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <section className="admin-image-upload">
+      <div className="admin-image-label">
+        <span>Ortsbild</span>
+        <small>JPG, PNG oder WebP · maximal 4 MB</small>
+      </div>
+      {imageUrl ? (
+        <div className="admin-image-preview">
+          <img src={imageUrl} alt="" />
+          <button type="button" onClick={() => onChange(undefined)} title="Bild aus dem Ortseintrag entfernen">
+            <X size={17} />
+          </button>
+        </div>
+      ) : (
+        <div className="admin-image-placeholder"><Image size={24} /><span>Noch kein Bild</span></div>
+      )}
+      <label className={uploading ? "admin-upload-button disabled" : "admin-upload-button"} htmlFor={inputId}>
+        {uploading ? <Loader2 className="spin" size={17} /> : <Upload size={17} />}
+        {uploading ? "Bild wird hochgeladen…" : imageUrl ? "Bild ersetzen" : "Bild auswählen und hochladen"}
+      </label>
+      <input
+        id={inputId}
+        className="admin-file-input"
+        type="file"
+        accept="image/jpeg,image/png,image/webp"
+        disabled={uploading}
+        onChange={(event) => {
+          void upload(event.target.files?.[0]);
+          event.target.value = "";
+        }}
+      />
+      {imageUrl && <p className="admin-upload-success"><Check size={14} />Bild hochgeladen – Ort noch speichern.</p>}
+      {error && <p className="admin-upload-error"><AlertCircle size={14} />{error}</p>}
+    </section>
   );
 }
 
@@ -462,4 +589,3 @@ function AdminApp() {
 }
 
 export { AdminApp };
-

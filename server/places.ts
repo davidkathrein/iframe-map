@@ -1,6 +1,7 @@
 import { get, put, type GetBlobResult } from "@vercel/blob";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isGoogleMapsUrl } from "./google-maps.js";
 
 const CATEGORIES = [
   "Gewässer",
@@ -22,6 +23,7 @@ type PlaceRecord = {
   geometry?: "point" | "area";
   description?: string;
   imageUrl?: string;
+  googleMapsUrl?: string;
   coordinates?: [number, number];
   polygon?: [number, number][];
 };
@@ -31,6 +33,13 @@ const MAX_PLACES = 500;
 const fallbackPlaces = JSON.parse(
   readFileSync(join(process.cwd(), "src/data/places.json"), "utf8"),
 ) as unknown;
+
+function storageOptions() {
+  return {
+    token: process.env.S3_READ_WRITE_TOKEN,
+    storeId: process.env.S3_STORE_ID,
+  };
+}
 
 export type PlacesDocument = {
   places: PlaceRecord[];
@@ -43,8 +52,12 @@ async function streamToText(stream: ReadableStream<Uint8Array>) {
 }
 
 async function currentBlob(): Promise<GetBlobResult | null> {
-  if (!process.env.BLOB_READ_WRITE_TOKEN && !process.env.BLOB_STORE_ID) return null;
-  return get(CURRENT_PATH, { access: "private", useCache: false });
+  if (!process.env.S3_STORE_ID) return null;
+  return get(CURRENT_PATH, {
+    access: "private",
+    useCache: false,
+    ...storageOptions(),
+  });
 }
 
 export async function readPlaces(): Promise<PlacesDocument> {
@@ -76,6 +89,7 @@ export async function writePlaces(places: unknown, expectedRevision: unknown) {
       access: "private",
       addRandomSuffix: true,
       contentType: "application/json",
+      ...storageOptions(),
     });
   }
 
@@ -85,6 +99,7 @@ export async function writePlaces(places: unknown, expectedRevision: unknown) {
     contentType: "application/json",
     cacheControlMaxAge: 60,
     ...(current ? { ifMatch: current.blob.etag } : {}),
+    ...storageOptions(),
   });
 
   return { conflict: false as const, revision: saved.etag };
@@ -143,6 +158,14 @@ export function validatePlaces(value: unknown): PlaceRecord[] {
         throw new Error(`Eintrag ${index + 1} hat eine ungültige Bild-URL.`);
       }
     }
+    if (place.googleMapsUrl !== undefined) {
+      if (typeof place.googleMapsUrl !== "string" || place.googleMapsUrl.length > 2000) {
+        throw new Error(`Eintrag ${index + 1} hat einen ungültigen Google-Maps-Link.`);
+      }
+      if (!isGoogleMapsUrl(place.googleMapsUrl)) {
+        throw new Error(`Eintrag ${index + 1} hat keinen gültigen Google-Maps-Link.`);
+      }
+    }
 
     return {
       ...(id ? { id } : {}),
@@ -153,6 +176,7 @@ export function validatePlaces(value: unknown): PlaceRecord[] {
       ...(place.geometry ? { geometry: place.geometry as "point" | "area" } : {}),
       ...(place.description ? { description: place.description as string } : {}),
       ...(place.imageUrl ? { imageUrl: place.imageUrl as string } : {}),
+      ...(place.googleMapsUrl ? { googleMapsUrl: place.googleMapsUrl as string } : {}),
       ...(place.coordinates ? { coordinates: place.coordinates as [number, number] } : {}),
       ...(place.polygon ? { polygon: place.polygon as [number, number][] } : {}),
     };

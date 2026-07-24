@@ -20,11 +20,16 @@ werden ohne neues Deployment veröffentlicht.
 ### Vercel einmalig einrichten
 
 1. Im Vercel-Projekt unter **Storage** einen privaten Blob Store erstellen und mit
-   dem Projekt verbinden. Vercel setzt dadurch `BLOB_READ_WRITE_TOKEN`.
-2. Unter **Settings → Environment Variables** ergänzen:
+   dem Projekt verbinden. Für dieses Projekt wird dabei der Variablen-Präfix `S3`
+   verwendet. Vercel setzt dadurch `S3_READ_WRITE_TOKEN`, `S3_STORE_ID` und
+   `S3_WEBHOOK_PUBLIC_KEY`.
+2. Einen öffentlichen Blob Store mit dem Präfix `BLOB` verbinden. Dieser setzt
+   `BLOB_READ_WRITE_TOKEN`, `BLOB_STORE_ID` und `BLOB_WEBHOOK_PUBLIC_KEY` und
+   speichert die direkt auf der Karte ausgelieferten Ortsbilder.
+3. Unter **Settings → Environment Variables** ergänzen:
    - `ADMIN_PASSWORD`: ein starkes Passwort mit mindestens 12 Zeichen
    - `SESSION_SECRET`: ein zufälliger Wert mit mindestens 32 Zeichen
-3. Das Projekt neu deployen.
+4. Das Projekt neu deployen.
 
 Beim ersten Speichern wird der lokale Ausgangsstand in Blob übernommen. Vor späteren
 Änderungen legt die API unter `data/history/` automatisch eine Sicherung an. Die
@@ -56,7 +61,8 @@ Ausgangsstand und Notfall-Fallback. Ein Eintrag kann diese optionalen Angaben en
   "features": ["Gewässer", "Familie & Spiel"],
   "coordinates": [9.672, 47.215],
   "description": "Kurze Beschreibung mit höchstens etwa 250 Zeichen.",
-  "imageUrl": "https://<blob-store>/orte/baggersee.jpg"
+  "imageUrl": "https://<blob-store>/orte/baggersee.jpg",
+  "googleMapsUrl": "https://www.google.com/maps/place/..."
 }
 ```
 
@@ -69,6 +75,10 @@ Flächen erhalten zusätzlich `"geometry": "area"`. Optional kann ihre tatsächl
 ```
 
 Für Bilder die öffentliche Vercel-Blob-URL in `imageUrl` eintragen. Fehlt sie, bleibt die Ortskarte bewusst bildlos.
+
+Ein optionaler `googleMapsUrl` verweist direkt auf den passenden Google-Maps-Eintrag.
+Er kann in `/pflege` eingefügt und vor dem Speichern geprüft werden. Ohne direkten
+Link öffnet die Ortskarte weiterhin die hinterlegten Koordinaten in Google Maps.
 
 Erlaubte Anzeige-Icons sind `water`, `park`, `nature`, `mountain`, `family` und `culture`.
 
