@@ -77,8 +77,10 @@ Flächen erhalten zusätzlich `"geometry": "area"`. Optional kann ihre tatsächl
 Für Bilder die öffentliche Vercel-Blob-URL in `imageUrl` eintragen. Fehlt sie, bleibt die Ortskarte bewusst bildlos.
 
 Ein optionaler `googleMapsUrl` verweist direkt auf den passenden Google-Maps-Eintrag.
-Er kann in `/pflege` eingefügt und vor dem Speichern geprüft werden. Ohne direkten
-Link öffnet die Ortskarte weiterhin die hinterlegten Koordinaten in Google Maps.
+Er kann in `/pflege` eingefügt und vor dem Speichern geprüft werden. Über
+„Koordinaten übernehmen“ liest die Pflegeansicht Positionen aus direkten Maps-URLs
+und aus `maps.app.goo.gl`-Weiterleitungen aus. Ohne direkten Link öffnet die
+Ortskarte weiterhin die hinterlegten Koordinaten in Google Maps.
 
 Erlaubte Anzeige-Icons sind `water`, `park`, `nature`, `mountain`, `family` und `culture`.
 

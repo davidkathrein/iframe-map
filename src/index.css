@@ -348,6 +348,19 @@ input, textarea, select { font: inherit; }
 
 .admin-marker.active:active { cursor: grabbing; }
 
+.admin-area-vertex {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 3px solid white;
+  border-radius: 50%;
+  background: #168565;
+  box-shadow: 0 3px 10px rgba(14, 74, 57, .38);
+  cursor: grab;
+}
+
+.admin-area-vertex:active { cursor: grabbing; }
+
 .admin-form {
   min-width: 0;
   overflow: auto;
@@ -411,6 +424,42 @@ input, textarea, select { font: inherit; }
   font-size: 11px;
   font-weight: 750;
 }
+.admin-google-maps { margin-top: 17px; }
+.admin-google-maps > label { display: block; }
+.admin-google-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.admin-resolve-button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid #77aa99;
+  border-radius: 8px;
+  color: #126f56;
+  background: #eff9f5;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.admin-resolve-button:hover { background: #e3f5ee; }
+.admin-resolve-button:disabled { cursor: not-allowed; opacity: .5; }
+.admin-inline-notice {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 8px 0 0;
+  color: #168565;
+  font-size: 11px;
+  font-weight: 750;
+}
+.admin-inline-notice.error { color: #a52e2e; }
 
 .admin-image-upload {
   margin-top: 20px;
@@ -515,4 +564,5 @@ input, textarea, select { font: inherit; }
   .admin-field-grid { grid-template-columns: 1fr; }
   .admin-form { padding: 20px 16px 40px; }
   .admin-map-help { right: 60px; bottom: 14px; }
+  .admin-google-actions { align-items: flex-start; flex-direction: column; }
 }

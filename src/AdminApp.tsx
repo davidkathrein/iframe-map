@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent } from "react";
+import type { Feature, Polygon } from "geojson";
 import {
   AlertCircle,
   Check,
@@ -17,6 +18,7 @@ import {
 import {
   Map,
   MapControls,
+  MapGeoJSON,
   MapMarker,
   MarkerContent,
   useMap,
@@ -60,6 +62,24 @@ function parsePastedCoordinates(value: string): [number, number] | null {
   ) return null;
 
   return [longitude, latitude];
+}
+
+function defaultPolygon([longitude, latitude]: [number, number]): [number, number][] {
+  const horizontal = 0.003;
+  const vertical = 0.002;
+  return [
+    [longitude - horizontal, latitude - vertical],
+    [longitude + horizontal, latitude - vertical],
+    [longitude + horizontal, latitude + vertical],
+    [longitude - horizontal, latitude + vertical],
+    [longitude - horizontal, latitude - vertical],
+  ];
+}
+
+function polygonForPlace(place: PlaceRecord): [number, number][] {
+  return place.polygon && place.polygon.length >= 4
+    ? place.polygon
+    : defaultPolygon(coordinatesForPlace(place));
 }
 
 async function responseJson<T>(response: Response): Promise<T> {
@@ -133,21 +153,39 @@ function EditorMap({
   selected,
   onSelect,
   onMove,
+  onMoveVertex,
 }: {
   places: PlaceRecord[];
   selected: PlaceRecord;
   onSelect: (id: string) => void;
   onMove: (coordinates: [number, number]) => void;
+  onMoveVertex: (index: number, coordinates: [number, number]) => void;
 }) {
   const normalized = normalizePlaces(places);
   const selectedCoordinates = coordinatesForPlace(selected);
+  const selectedPolygon = polygonForPlace(selected);
+  const selectedArea = selected.geometry === "area";
+  const areaData = useMemo<Feature<Polygon, { id: string }>>(() => ({
+    type: "Feature",
+    properties: { id: selected.id ?? "selected-area" },
+    geometry: { type: "Polygon", coordinates: [selectedPolygon] },
+  }), [selected.id, selectedPolygon]);
 
   return (
     <div className="admin-map">
       <Map center={selectedCoordinates} zoom={13} minZoom={8} maxZoom={18} theme="light" attributionControl={{ compact: true }}>
         <MapFocus place={selected} />
+        {selectedArea && (
+          <MapGeoJSON
+            data={areaData}
+            id="admin-selected-area"
+            fillPaint={{ "fill-color": "#168565", "fill-opacity": 0.25 }}
+            linePaint={{ "line-color": "#0d6049", "line-width": 2.5 }}
+          />
+        )}
         {normalized.map((place) => {
           const active = place.id === selected.id;
+          if (active && selectedArea) return null;
           return (
             <MapMarker
               key={place.id}
@@ -171,11 +209,29 @@ function EditorMap({
             </MapMarker>
           );
         })}
+        {selectedArea && selectedPolygon.slice(0, -1).map(([longitude, latitude], index) => (
+          <MapMarker
+            key={`vertex-${index}`}
+            longitude={longitude}
+            latitude={latitude}
+            draggable
+            onDragEnd={({ lng, lat }) => onMoveVertex(index, [lng, lat])}
+          >
+            <MarkerContent>
+              <button
+                type="button"
+                className="admin-area-vertex"
+                aria-label={`Eckpunkt ${index + 1} verschieben`}
+                title="Ziehen, um diesen Eckpunkt zu verschieben"
+              />
+            </MarkerContent>
+          </MapMarker>
+        ))}
         <MapControls position="bottom-right" showCompass={false} showLocate showFullscreen={false} onLocate={({ longitude, latitude }) => onMove([longitude, latitude])} />
       </Map>
       <div className="admin-map-help">
         <MapPin size={16} />
-        Grünen Punkt ziehen oder Standort-Schaltfläche verwenden
+        {selectedArea ? "Eckpunkte der Fläche ziehen" : "Grünen Punkt ziehen oder Standort-Schaltfläche verwenden"}
       </div>
     </div>
   );
@@ -252,7 +308,15 @@ function PlaceForm({
         </label>
         <label>
           <span>Darstellung</span>
-          <select value={place.geometry ?? "point"} onChange={(event) => onChange({ geometry: event.target.value as "point" | "area" })}>
+          <select
+            value={place.geometry ?? "point"}
+            onChange={(event) => {
+              const geometry = event.target.value as "point" | "area";
+              onChange(geometry === "area" && !place.polygon
+                ? { geometry, polygon: defaultPolygon(coordinates) }
+                : { geometry });
+            }}
+          >
             <option value="point">Punkt</option>
             <option value="area">Fläche</option>
           </select>
@@ -303,25 +367,7 @@ function PlaceForm({
         </label>
       </div>
 
-      <label>
-        <span>Google-Maps-Link <small>optional</small></span>
-        <input
-          type="url"
-          value={place.googleMapsUrl ?? ""}
-          placeholder="https://www.google.com/maps/…"
-          onChange={(event) => onChange({ googleMapsUrl: event.target.value.trim() || undefined })}
-        />
-      </label>
-      <div className="admin-link-actions">
-        <a
-          href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.name}, ${place.municipality}`)}`}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Ort in Google Maps suchen
-        </a>
-        {place.googleMapsUrl && <a href={place.googleMapsUrl} target="_blank" rel="noreferrer">Gespeicherten Link prüfen</a>}
-      </div>
+      <GoogleMapsField key={place.id} place={place} onChange={onChange} />
 
       <ImageUpload
         placeId={place.id ?? "neu"}
@@ -330,9 +376,81 @@ function PlaceForm({
       />
 
       {place.geometry === "area" && (
-        <p className="admin-hint">Bei Flächen wird hier der Mittelpunkt verschoben. Ein vorhandenes Polygon bleibt unverändert.</p>
+        <p className="admin-hint">Jeden Eckpunkt der Fläche direkt auf der Karte ziehen. Die Fläche wird beim Speichern mit allen Punkten übernommen.</p>
       )}
     </div>
+  );
+}
+
+function GoogleMapsField({
+  place,
+  onChange,
+}: {
+  place: PlaceRecord;
+  onChange: (patch: Partial<PlaceRecord>) => void;
+}) {
+  const [resolving, setResolving] = useState(false);
+  const [notice, setNotice] = useState<Notice>(null);
+
+  const resolveCoordinates = async () => {
+    if (!place.googleMapsUrl) return;
+    setResolving(true);
+    setNotice(null);
+    try {
+      const result = await responseJson<{ coordinates: [number, number] }>(await fetch("/api/google-maps", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: place.googleMapsUrl }),
+      }));
+      onChange({ coordinates: result.coordinates });
+      setNotice({ kind: "success", text: "Koordinaten wurden aus Google Maps übernommen." });
+    } catch (caught) {
+      setNotice({ kind: "error", text: caught instanceof Error ? caught.message : "Koordinaten konnten nicht ermittelt werden." });
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  return (
+    <section className="admin-google-maps">
+      <label>
+        <span>Google-Maps-Link <small>optional</small></span>
+        <input
+          type="url"
+          value={place.googleMapsUrl ?? ""}
+          placeholder="https://www.google.com/maps/…"
+          onChange={(event) => {
+            onChange({ googleMapsUrl: event.target.value.trim() || undefined });
+            setNotice(null);
+          }}
+        />
+      </label>
+      <div className="admin-google-actions">
+        <div className="admin-link-actions">
+          <a
+            href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${place.name}, ${place.municipality}`)}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Ort in Google Maps suchen
+          </a>
+          {place.googleMapsUrl && <a href={place.googleMapsUrl} target="_blank" rel="noreferrer">Link prüfen</a>}
+        </div>
+        <button
+          className="admin-resolve-button"
+          type="button"
+          disabled={!place.googleMapsUrl || resolving}
+          onClick={() => void resolveCoordinates()}
+        >
+          {resolving ? <Loader2 className="spin" size={15} /> : <MapPin size={15} />}
+          {resolving ? "Wird ermittelt…" : "Koordinaten übernehmen"}
+        </button>
+      </div>
+      {notice && <p className={`admin-inline-notice ${notice.kind}`}>
+        {notice.kind === "success" ? <Check size={14} /> : <AlertCircle size={14} />}
+        {notice.text}
+      </p>}
+    </section>
   );
 }
 
@@ -455,6 +573,14 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
     setNotice(null);
   };
 
+  const moveSelectedVertex = (index: number, coordinates: [number, number]) => {
+    if (!selected) return;
+    const polygon = [...polygonForPlace(selected)];
+    polygon[index] = coordinates;
+    polygon[polygon.length - 1] = polygon[0];
+    changeSelected({ polygon });
+  };
+
   const addPlace = () => {
     const id = `ort-${crypto.randomUUID()}`;
     setPlaces((current) => [...current, {
@@ -557,6 +683,7 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
                 selected={selected}
                 onSelect={setSelectedId}
                 onMove={(coordinates) => changeSelected({ coordinates })}
+                onMoveVertex={moveSelectedVertex}
               />
               <PlaceForm place={selected} onChange={changeSelected} onDelete={deleteSelected} />
             </section>
