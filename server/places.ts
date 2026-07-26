@@ -1,32 +1,15 @@
 import { get, put, type GetBlobResult } from "@vercel/blob";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  createPlaceId,
+  FEATURES,
+  ICON_KINDS,
+  isClosedPolygon,
+  isCoordinatePair,
+  type PlaceRecord,
+} from "../src/places.js";
 import { isGoogleMapsUrl } from "./google-maps.js";
-
-const CATEGORIES = [
-  "Gewässer",
-  "Schatten",
-  "Park & Ruhe",
-  "Wald & Natur",
-  "Aussicht & Höhe",
-  "Familie & Spiel",
-  "Geschichte & Kultur",
-] as const;
-const ICON_KINDS = ["water", "park", "nature", "mountain", "family", "culture"] as const;
-
-type PlaceRecord = {
-  id?: string;
-  municipality: string;
-  name: string;
-  icon: (typeof ICON_KINDS)[number];
-  features: Array<(typeof CATEGORIES)[number]>;
-  geometry?: "point" | "area";
-  description?: string;
-  imageUrl?: string;
-  googleMapsUrl?: string;
-  coordinates?: [number, number];
-  polygon?: [number, number][];
-};
 
 const CURRENT_PATH = "data/places.json";
 const MAX_PLACES = 500;
@@ -105,14 +88,6 @@ export async function writePlaces(places: unknown, expectedRevision: unknown) {
   return { conflict: false as const, revision: saved.etag };
 }
 
-function isCoordinatePair(value: unknown): value is [number, number] {
-  return Array.isArray(value)
-    && value.length === 2
-    && value.every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))
-    && value[0] >= -180 && value[0] <= 180
-    && value[1] >= -90 && value[1] <= 90;
-}
-
 export function validatePlaces(value: unknown): PlaceRecord[] {
   if (!Array.isArray(value) || value.length > MAX_PLACES) {
     throw new Error("Ungültiges Ortsverzeichnis.");
@@ -122,61 +97,74 @@ export function validatePlaces(value: unknown): PlaceRecord[] {
   return value.map((entry, index) => {
     if (!entry || typeof entry !== "object") throw new Error(`Eintrag ${index + 1} ist ungültig.`);
     const place = entry as Record<string, unknown>;
-    const id = typeof place.id === "string" ? place.id.trim() : undefined;
+    const providedId = typeof place.id === "string" ? place.id.trim() : undefined;
     const municipality = typeof place.municipality === "string" ? place.municipality.trim() : "";
     const name = typeof place.name === "string" ? place.name.trim() : "";
+    const id = providedId || createPlaceId({ municipality, name });
     const icon = place.icon;
     const features = place.features;
+    const description: string | undefined = typeof place.description === "string" ? place.description.trim() : undefined;
+    const imageUrl: string | undefined = typeof place.imageUrl === "string" ? place.imageUrl.trim() : undefined;
+    const googleMapsUrl: string | undefined = typeof place.googleMapsUrl === "string" ? place.googleMapsUrl.trim() : undefined;
 
-    if (id && (id.length > 120 || ids.has(id))) throw new Error(`Eintrag ${index + 1} hat keine eindeutige ID.`);
-    if (id) ids.add(id);
+    if (id.length > 120 || ids.has(id)) throw new Error(`Eintrag ${index + 1} hat keine eindeutige ID.`);
+    ids.add(id);
     if (!municipality || municipality.length > 100 || !name || name.length > 160) {
       throw new Error(`Eintrag ${index + 1} benötigt Gemeinde und Name.`);
     }
     if (!ICON_KINDS.includes(icon as never)) throw new Error(`Eintrag ${index + 1} hat ein ungültiges Icon.`);
-    if (!Array.isArray(features) || features.length === 0 || features.some((feature) => !CATEGORIES.includes(feature as never))) {
+    if (!Array.isArray(features) || features.length === 0 || features.some((feature) => !FEATURES.includes(feature as never))) {
       throw new Error(`Eintrag ${index + 1} hat ungültige Merkmale.`);
     }
     if (place.coordinates !== undefined && !isCoordinatePair(place.coordinates)) {
       throw new Error(`Eintrag ${index + 1} hat ungültige Koordinaten.`);
     }
-    if (place.polygon !== undefined && (!Array.isArray(place.polygon) || place.polygon.length < 4 || place.polygon.length > 500 || !place.polygon.every(isCoordinatePair))) {
+    if (place.polygon !== undefined && !isClosedPolygon(place.polygon)) {
       throw new Error(`Eintrag ${index + 1} hat ein ungültiges Polygon.`);
     }
     if (place.geometry !== undefined && place.geometry !== "point" && place.geometry !== "area") {
       throw new Error(`Eintrag ${index + 1} hat eine ungültige Geometrie.`);
     }
-    if (place.description !== undefined && (typeof place.description !== "string" || place.description.length > 500)) {
+    if (place.description !== undefined && typeof place.description !== "string") {
+      throw new Error(`Die Beschreibung von Eintrag ${index + 1} ist ungültig.`);
+    }
+    if (description !== undefined && description.length > 250) {
       throw new Error(`Die Beschreibung von Eintrag ${index + 1} ist zu lang.`);
     }
-    if (place.imageUrl !== undefined) {
-      if (typeof place.imageUrl !== "string" || place.imageUrl.length > 2000) throw new Error(`Eintrag ${index + 1} hat eine ungültige Bild-URL.`);
+    if (place.imageUrl !== undefined && typeof place.imageUrl !== "string") {
+      throw new Error(`Eintrag ${index + 1} hat eine ungültige Bild-URL.`);
+    }
+    if (imageUrl !== undefined) {
+      if (imageUrl.length > 2000) throw new Error(`Eintrag ${index + 1} hat eine ungültige Bild-URL.`);
       try {
-        const url = new URL(place.imageUrl);
-        if (!["http:", "https:"].includes(url.protocol)) throw new Error();
+        const url = new URL(imageUrl);
+        if (url.protocol !== "https:") throw new Error();
       } catch {
         throw new Error(`Eintrag ${index + 1} hat eine ungültige Bild-URL.`);
       }
     }
-    if (place.googleMapsUrl !== undefined) {
-      if (typeof place.googleMapsUrl !== "string" || place.googleMapsUrl.length > 2000) {
+    if (place.googleMapsUrl !== undefined && typeof place.googleMapsUrl !== "string") {
+      throw new Error(`Eintrag ${index + 1} hat einen ungültigen Google-Maps-Link.`);
+    }
+    if (googleMapsUrl !== undefined) {
+      if (googleMapsUrl.length > 2000) {
         throw new Error(`Eintrag ${index + 1} hat einen ungültigen Google-Maps-Link.`);
       }
-      if (!isGoogleMapsUrl(place.googleMapsUrl)) {
+      if (!isGoogleMapsUrl(googleMapsUrl)) {
         throw new Error(`Eintrag ${index + 1} hat keinen gültigen Google-Maps-Link.`);
       }
     }
 
     return {
-      ...(id ? { id } : {}),
+      id,
       municipality,
       name,
       icon: icon as PlaceRecord["icon"],
       features: Array.from(new Set(features)) as PlaceRecord["features"],
       ...(place.geometry ? { geometry: place.geometry as "point" | "area" } : {}),
-      ...(place.description ? { description: place.description as string } : {}),
-      ...(place.imageUrl ? { imageUrl: place.imageUrl as string } : {}),
-      ...(place.googleMapsUrl ? { googleMapsUrl: place.googleMapsUrl as string } : {}),
+      ...(description ? { description } : {}),
+      ...(imageUrl ? { imageUrl } : {}),
+      ...(googleMapsUrl ? { googleMapsUrl } : {}),
       ...(place.coordinates ? { coordinates: place.coordinates as [number, number] } : {}),
       ...(place.polygon ? { polygon: place.polygon as [number, number][] } : {}),
     };

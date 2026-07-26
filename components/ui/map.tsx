@@ -171,6 +171,8 @@ type MapProps = {
   children?: ReactNode;
   /** Additional CSS classes for the map container */
   className?: string;
+  /** Accessible name for the interactive map region */
+  ariaLabel?: string;
   /**
    * Theme for the map. If not provided, automatically detects system preference.
    * Pass your theme value here.
@@ -232,6 +234,7 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
   {
     children,
     className,
+    ariaLabel = "Interaktive Karte",
     theme: themeProp,
     styles,
     blank = false,
@@ -400,6 +403,7 @@ const Map = forwardRef<MapRef, MapProps>(function Map(
       <div
         ref={containerRef}
         className={cn("relative h-full w-full", className)}
+        aria-label={ariaLabel}
       >
         {(!isLoaded || loading) && <DefaultLoader />}
         {/* SSR-safe: children render only when map is loaded on client */}
@@ -923,10 +927,10 @@ function MapControls({
     >
       {showZoom && (
         <ControlGroup>
-          <ControlButton onClick={handleZoomIn} label="Zoom in">
+          <ControlButton onClick={handleZoomIn} label="Karte vergrößern">
             <Plus className="size-4" />
           </ControlButton>
-          <ControlButton onClick={handleZoomOut} label="Zoom out">
+          <ControlButton onClick={handleZoomOut} label="Karte verkleinern">
             <Minus className="size-4" />
           </ControlButton>
         </ControlGroup>
@@ -940,7 +944,7 @@ function MapControls({
         <ControlGroup>
           <ControlButton
             onClick={handleLocate}
-            label="Find my location"
+            label="Meinen Standort verwenden"
             disabled={waitingForLocation}
           >
             {waitingForLocation ? (
@@ -953,7 +957,7 @@ function MapControls({
       )}
       {showFullscreen && (
         <ControlGroup>
-          <ControlButton onClick={handleFullscreen} label="Toggle fullscreen">
+          <ControlButton onClick={handleFullscreen} label="Vollbild umschalten">
             <Maximize className="size-4" />
           </ControlButton>
         </ControlGroup>
@@ -988,7 +992,7 @@ function CompassButton({ onClick }: { onClick: () => void }) {
   }, [map]);
 
   return (
-    <ControlButton onClick={onClick} label="Reset bearing to north">
+    <ControlButton onClick={onClick} label="Karte nach Norden ausrichten">
       <svg
         ref={compassRef}
         viewBox="0 0 24 24"

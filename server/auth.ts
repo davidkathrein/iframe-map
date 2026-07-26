@@ -1,7 +1,11 @@
 import { createHmac, createHash, timingSafeEqual } from "node:crypto";
 
-const COOKIE_NAME = "walgau_admin_session";
+const COOKIE_NAME = "__Host-walgau_admin_session";
 const SESSION_SECONDS = 8 * 60 * 60;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const MAX_LOGIN_ATTEMPTS = 5;
+const MAX_TRACKED_CLIENTS = 1_000;
+const loginAttempts = new Map<string, { count: number; resetAt: number }>();
 
 function secret() {
   const value = process.env.SESSION_SECRET;
@@ -29,6 +33,52 @@ function parseCookies(request: Request) {
     cookies.set(part.slice(0, separator).trim(), decodeURIComponent(part.slice(separator + 1).trim()));
   }
   return cookies;
+}
+
+function loginKey(request: Request) {
+  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim()
+    || request.headers.get("x-real-ip")
+    || "unknown";
+}
+
+export function loginRateLimit(request: Request) {
+  const key = loginKey(request);
+  const now = Date.now();
+  const current = loginAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    loginAttempts.delete(key);
+    return { limited: false, retryAfter: 0 };
+  }
+  return {
+    limited: current.count >= MAX_LOGIN_ATTEMPTS,
+    retryAfter: Math.max(1, Math.ceil((current.resetAt - now) / 1000)),
+  };
+}
+
+export function recordFailedLogin(request: Request) {
+  const key = loginKey(request);
+  const now = Date.now();
+  const current = loginAttempts.get(key);
+  if (!current || current.resetAt <= now) {
+    loginAttempts.forEach((attempt, trackedKey) => {
+      if (attempt.resetAt <= now) loginAttempts.delete(trackedKey);
+    });
+    if (loginAttempts.size >= MAX_TRACKED_CLIENTS) {
+      const oldestKey = loginAttempts.keys().next().value;
+      if (oldestKey) loginAttempts.delete(oldestKey);
+    }
+    loginAttempts.set(key, { count: 1, resetAt: now + LOGIN_WINDOW_MS });
+    return;
+  }
+  current.count += 1;
+}
+
+export function clearFailedLogins(request: Request) {
+  loginAttempts.delete(loginKey(request));
+}
+
+export function delayFailedLogin() {
+  return new Promise((resolve) => setTimeout(resolve, 750));
 }
 
 export function isValidPassword(password: unknown) {
@@ -65,6 +115,9 @@ export function isAuthenticated(request: Request) {
 export function isSameOrigin(request: Request) {
   const origin = request.headers.get("origin");
   if (!origin) return true;
-  return new URL(origin).host === new URL(request.url).host;
+  try {
+    return new URL(origin).origin === new URL(request.url).origin;
+  } catch {
+    return false;
+  }
 }
-

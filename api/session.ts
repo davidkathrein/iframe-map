@@ -1,4 +1,14 @@
-import { clearSessionCookie, createSessionCookie, isAuthenticated, isSameOrigin, isValidPassword } from "../server/auth.js";
+import {
+  clearFailedLogins,
+  clearSessionCookie,
+  createSessionCookie,
+  delayFailedLogin,
+  isAuthenticated,
+  isSameOrigin,
+  isValidPassword,
+  loginRateLimit,
+  recordFailedLogin,
+} from "../server/auth.js";
 
 const jsonHeaders = { "Content-Type": "application/json", "Cache-Control": "no-store" };
 
@@ -15,6 +25,13 @@ export function GET(request: Request) {
 
 export async function POST(request: Request) {
   if (!isSameOrigin(request)) return json({ error: "Ungültige Anfrage." }, { status: 403 });
+  const rateLimit = loginRateLimit(request);
+  if (rateLimit.limited) {
+    return json(
+      { error: "Zu viele Anmeldeversuche. Bitte später erneut versuchen." },
+      { status: 429, headers: { "Retry-After": String(rateLimit.retryAfter) } },
+    );
+  }
   let body: unknown;
   try {
     body = await request.json();
@@ -22,8 +39,11 @@ export async function POST(request: Request) {
     return json({ error: "Ungültige Anfrage." }, { status: 400 });
   }
   if (!isValidPassword((body as { password?: unknown })?.password)) {
+    recordFailedLogin(request);
+    await delayFailedLogin();
     return json({ error: "Das Passwort ist nicht korrekt." }, { status: 401 });
   }
+  clearFailedLogins(request);
   return json(
     { authenticated: true },
     { headers: { "Set-Cookie": createSessionCookie() } },
