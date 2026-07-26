@@ -29,7 +29,10 @@ werden ohne neues Deployment veröffentlicht.
 3. Unter **Settings → Environment Variables** ergänzen:
    - `ADMIN_PASSWORD`: ein starkes Passwort mit mindestens 12 Zeichen
    - `SESSION_SECRET`: ein zufälliger Wert mit mindestens 32 Zeichen
-4. Das Projekt neu deployen.
+4. Auf Projektebene zusätzlich eine Rate-Limit-Regel für `POST /api/session`
+   aktivieren. Die Anwendung drosselt Fehlversuche bereits pro laufender Function;
+   die Plattformregel deckt zusätzlich parallele Function-Instanzen ab.
+5. Das Projekt neu deployen.
 
 Beim ersten Speichern wird der lokale Ausgangsstand in Blob übernommen. Vor späteren
 Änderungen legt die API unter `data/history/` automatisch eine Sicherung an. Die
@@ -76,11 +79,10 @@ Flächen erhalten zusätzlich `"geometry": "area"`. Optional kann ihre tatsächl
 
 Für Bilder die öffentliche Vercel-Blob-URL in `imageUrl` eintragen. Fehlt sie, bleibt die Ortskarte bewusst bildlos.
 
-Ein optionaler `googleMapsUrl` verweist direkt auf den passenden Google-Maps-Eintrag.
-Er kann in `/pflege` eingefügt und vor dem Speichern geprüft werden. Über
-„Koordinaten übernehmen“ liest die Pflegeansicht Positionen aus direkten Maps-URLs
-und aus `maps.app.goo.gl`-Weiterleitungen aus. Ohne direkten Link öffnet die
-Ortskarte weiterhin die hinterlegten Koordinaten in Google Maps.
+Ein optionaler `googleMapsUrl` dient in `/pflege` als prüfbare Quelle für den passenden
+Google-Maps-Eintrag. Über „Koordinaten übernehmen“ liest die Pflegeansicht Positionen
+aus direkten Maps-URLs und aus `maps.app.goo.gl`-Weiterleitungen aus. Der öffentliche
+Routenlink verwendet anschließend immer die gespeicherten Koordinaten als Ziel.
 
 Erlaubte Anzeige-Icons sind `water`, `park`, `nature`, `mountain`, `family` und `culture`.
 

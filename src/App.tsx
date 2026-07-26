@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Feature, FeatureCollection, Point, Polygon } from "geojson";
+import MapLibreGL from "maplibre-gl";
 import {
-  ChevronLeft,
   Info,
   Landmark,
   MapPin,
@@ -26,6 +26,7 @@ import rawPlaces from "./data/places.json";
 import {
   FILTERS,
   normalizePlaces,
+  polygonForPlace,
   type Filter,
   type IconKind,
   type Place,
@@ -33,21 +34,12 @@ import {
 } from "./places";
 
 function areaGeometry(place: Place): Feature<Polygon, { id: string }> {
-  const [longitude, latitude] = place.coordinates;
-  const horizontal = 0.009;
-  const vertical = 0.005;
   return {
     type: "Feature",
     properties: { id: place.id },
     geometry: {
       type: "Polygon",
-      coordinates: [place.polygon ?? [
-        [longitude - horizontal, latitude - vertical],
-        [longitude + horizontal, latitude - vertical * 0.6],
-        [longitude + horizontal * 0.65, latitude + vertical],
-        [longitude - horizontal * 0.7, latitude + vertical * 0.7],
-        [longitude - horizontal, latitude - vertical],
-      ]],
+      coordinates: [polygonForPlace(place)],
     },
   };
 }
@@ -64,6 +56,41 @@ const iconComponents = {
 function PlaceIcon({ icon, size = 19 }: { icon: IconKind; size?: number }) {
   const Icon = iconComponents[icon];
   return <Icon size={size} strokeWidth={2.4} aria-hidden="true" />;
+}
+
+function AdaptiveAttribution() {
+  const { map } = useMap();
+
+  useEffect(() => {
+    if (!map) return;
+
+    const container = map.getContainer();
+    let control = new MapLibreGL.AttributionControl({ compact: false });
+    map.addControl(control, "bottom-right");
+
+    const removeInteractionListeners = () => {
+      container.removeEventListener("pointerdown", collapse);
+      container.removeEventListener("wheel", collapse);
+      container.removeEventListener("keydown", collapse);
+    };
+    const collapse = () => {
+      removeInteractionListeners();
+      if (map.hasControl(control)) map.removeControl(control);
+      control = new MapLibreGL.AttributionControl({ compact: true });
+      map.addControl(control, "bottom-right");
+    };
+
+    container.addEventListener("pointerdown", collapse, { once: true });
+    container.addEventListener("wheel", collapse, { once: true });
+    container.addEventListener("keydown", collapse, { once: true });
+
+    return () => {
+      removeInteractionListeners();
+      if (map.hasControl(control)) map.removeControl(control);
+    };
+  }, [map]);
+
+  return null;
 }
 
 function descriptionFor(place: Place) {
@@ -88,7 +115,7 @@ function MarkerLayer({ items, onSelect }: { items: Place[]; onSelect: (place: Pl
   return items.filter((place) => place.geometry === "point").map((place) => <PlaceMarker key={place.id} place={place} onSelect={onSelect} />);
 }
 
-function OverviewClusters({ items }: { items: Place[] }) {
+function OverviewClusters({ items, onSelect }: { items: Place[]; onSelect: (place: Place) => void }) {
   const { map } = useMap();
   const [zoom, setZoom] = useState(9);
   useEffect(() => {
@@ -103,7 +130,20 @@ function OverviewClusters({ items }: { items: Place[] }) {
     features: items.filter((place) => place.geometry === "point").map((place) => ({ type: "Feature", properties: { id: place.id }, geometry: { type: "Point", coordinates: place.coordinates } })),
   }), [items]);
   if (zoom >= 11) return null;
-  return <MapClusterLayer data={data} clusterMaxZoom={11} clusterRadius={62} clusterColors={["#168565", "#11775b", "#0e6049"]} clusterThresholds={[5, 12]} pointColor="#168565" />;
+  return (
+    <MapClusterLayer
+      data={data}
+      clusterMaxZoom={11}
+      clusterRadius={62}
+      clusterColors={["#168565", "#11775b", "#0e6049"]}
+      clusterThresholds={[5, 12]}
+      pointColor="#168565"
+      onPointClick={(feature) => {
+        const place = items.find((candidate) => candidate.id === feature.properties.id);
+        if (place) onSelect(place);
+      }}
+    />
+  );
 }
 
 function PlaceMarker({ place, onSelect }: { place: Place; onSelect: (place: Place) => void }) {
@@ -139,12 +179,44 @@ function FilterOptions({ activeFilters, onToggle }: { activeFilters: Filter[]; o
   );
 }
 
+function PlaceSelect({
+  places,
+  selectedId,
+  onSelect,
+}: {
+  places: Place[];
+  selectedId: string | null;
+  onSelect: (place: Place) => void;
+}) {
+  return (
+    <label className="mt-4 block border-t border-slate-200 pt-4 text-sm font-bold text-emerald-950">
+      Ort direkt auswählen
+      <select
+        className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700"
+        value={selectedId ?? ""}
+        onChange={(event) => {
+          const place = places.find((candidate) => candidate.id === event.target.value);
+          if (place) onSelect(place);
+        }}
+      >
+        <option value="">{places.length} passende Orte</option>
+        {places.map((place) => (
+          <option key={place.id} value={place.id}>{place.name} · {place.municipality}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function App() {
   const [places, setPlaces] = useState<Place[]>(() => normalizePlaces(rawPlaces as PlaceRecord[]));
   const [activeFilters, setActiveFilters] = useState<Filter[]>([]);
-  const [selectedPlace, setSelectedPlace] = useState<Place | null>(null);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const filterButtonRef = useRef<HTMLButtonElement>(null);
+  const mobileFilterDialogRef = useRef<HTMLDivElement>(null);
+  const mobileFilterCloseRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -163,21 +235,68 @@ function App() {
 
   const visiblePlaces = useMemo(() => {
     const selectedFilters = FILTERS.filter((filter) => activeFilters.includes(filter.id));
-    return places.filter((place) => selectedFilters.length === 0 || selectedFilters.some((filter) => filter.categories.some((category) => place.features.includes(category))));
-  }, [activeFilters]);
+    return places.filter((place) => selectedFilters.length === 0 || selectedFilters.some((filter) => filter.features.some((feature) => place.features.includes(feature))));
+  }, [activeFilters, places]);
+  const selectedPlace = useMemo(
+    () => visiblePlaces.find((place) => place.id === selectedPlaceId) ?? null,
+    [selectedPlaceId, visiblePlaces],
+  );
   const visibleAreas = useMemo<FeatureCollection<Polygon, { id: string }>>(
     () => ({ type: "FeatureCollection", features: visiblePlaces.filter((place) => place.geometry === "area").map(areaGeometry) }),
     [visiblePlaces],
   );
 
-  const selectPlace = (place: Place) => setSelectedPlace(place);
+  useEffect(() => {
+    if (selectedPlaceId && !selectedPlace) setSelectedPlaceId(null);
+  }, [selectedPlace, selectedPlaceId]);
+
+  useEffect(() => {
+    if (!filterPanelOpen) return;
+
+    const mobile = window.matchMedia("(max-width: 1023px)").matches;
+    if (mobile) mobileFilterCloseRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setFilterPanelOpen(false);
+        return;
+      }
+      if (!mobile || event.key !== "Tab") return;
+      const focusable = Array.from(
+        mobileFilterDialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+        ) ?? [],
+      );
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("keydown", handleKeyDown);
+      filterButtonRef.current?.focus();
+    };
+  }, [filterPanelOpen]);
+
+  const selectPlace = (place: Place) => setSelectedPlaceId(place.id);
+  const selectPlaceFromPanel = (place: Place) => {
+    selectPlace(place);
+    setFilterPanelOpen(false);
+  };
   const toggleFilter = (filter: Filter) => {
     setActiveFilters((current) => current.includes(filter) ? current.filter((item) => item !== filter) : [...current, filter]);
   };
 
   return (
     <main className="map-shell">
-      <Map center={[9.72, 47.2]} zoom={9.3} minZoom={8} maxZoom={16} theme="light" attributionControl={{ compact: true }}>
+      <Map ariaLabel="Karte der kühlen Orte im Walgau" center={[9.72, 47.2]} zoom={9.3} minZoom={8} maxZoom={16} theme="light" attributionControl={false}>
+        <AdaptiveAttribution />
         <MapGeoJSON
           data={visibleAreas}
           id="cool-place-areas"
@@ -192,13 +311,16 @@ function App() {
             if (place) selectPlace(place);
           }}
         />
-        <OverviewClusters items={visiblePlaces} />
+        <OverviewClusters items={visiblePlaces} onSelect={selectPlace} />
         <MarkerLayer items={visiblePlaces} onSelect={selectPlace} />
         <MapControls position="bottom-right" showCompass={false} showLocate={false} showFullscreen />
       </Map>
 
-      <section className="absolute left-2 top-4 z-10 hidden h-[52px] items-center gap-2 rounded-xl border border-white/70 bg-white/90 px-3 py-2 shadow-[0_6px_20px_rgba(19,57,47,.14)] backdrop-blur lg:flex md:top-6">
-        <h1 className="m-0 text-base font-extrabold tracking-tight text-emerald-950">Kühle Orte im Walgau</h1>
+      <section className="absolute left-2 top-4 z-10 flex max-w-[calc(100%-8rem)] items-center gap-2 rounded-xl border border-white/70 bg-white/90 px-3 py-2 shadow-[0_6px_20px_rgba(19,57,47,.14)] backdrop-blur md:top-6">
+        <div className="min-w-0">
+          <h1 className="m-0 truncate text-sm font-extrabold tracking-tight text-emerald-950 md:text-base">Kühle Orte im Walgau</h1>
+          <p className="m-0 truncate text-[11px] text-slate-600">Wasser, Schatten und Natur entdecken.</p>
+        </div>
         <button className="rounded-full p-1 text-slate-500 hover:bg-emerald-50 hover:text-emerald-800" aria-label="Hinweise anzeigen" onClick={() => setInfoOpen(true)}>
           <Info size={16} />
         </button>
@@ -206,6 +328,7 @@ function App() {
 
       <button
         type="button"
+        ref={filterButtonRef}
         className="absolute right-2 top-4 z-10 flex h-10 items-center gap-2 rounded-xl border border-white/70 bg-white/95 px-3 text-sm font-bold text-emerald-900 shadow-[0_6px_20px_rgba(19,57,47,.14)] transition hover:bg-emerald-50 md:top-6"
         aria-label={filterPanelOpen ? "Filter schließen" : "Filter anzeigen"}
         aria-expanded={filterPanelOpen}
@@ -223,16 +346,18 @@ function App() {
               {activeFilters.length > 0 && <button type="button" className="text-sm font-semibold text-emerald-800 underline" onClick={() => setActiveFilters([])}>Zurücksetzen</button>}
             </div>
             <FilterOptions activeFilters={activeFilters} onToggle={toggleFilter} />
+            <PlaceSelect places={visiblePlaces} selectedId={selectedPlaceId} onSelect={selectPlaceFromPanel} />
           </div>
 
-          <div className="fixed inset-0 z-30 lg:hidden" role="dialog" aria-modal="true" aria-label="Orte filtern">
-            <button type="button" className="absolute inset-0 bg-slate-950/25" aria-label="Filter schließen" onClick={() => setFilterPanelOpen(false)} />
+          <div ref={mobileFilterDialogRef} className="fixed inset-0 z-30 lg:hidden" role="dialog" aria-modal="true" aria-label="Orte filtern">
+            <div className="absolute inset-0 bg-slate-950/25" aria-hidden="true" onClick={() => setFilterPanelOpen(false)} />
             <section className="absolute inset-x-0 bottom-0 rounded-t-3xl bg-white p-5 shadow-2xl">
               <div className="mb-5 flex items-center justify-between gap-3">
                 <h2 className="m-0 text-lg font-extrabold text-emerald-950">Orte filtern</h2>
-                <button type="button" className="rounded-full p-2 text-slate-500 hover:bg-slate-100" aria-label="Filter schließen" onClick={() => setFilterPanelOpen(false)}><X size={19} /></button>
+                <button ref={mobileFilterCloseRef} type="button" className="rounded-full p-2 text-slate-500 hover:bg-slate-100" aria-label="Filter schließen" onClick={() => setFilterPanelOpen(false)}><X size={19} /></button>
               </div>
               <FilterOptions activeFilters={activeFilters} onToggle={toggleFilter} />
+              <PlaceSelect places={visiblePlaces} selectedId={selectedPlaceId} onSelect={selectPlaceFromPanel} />
               <div className="mt-6 grid grid-cols-2 gap-3">
                 <button type="button" className="rounded-xl border border-emerald-800 px-4 py-3 text-sm font-bold text-emerald-800" onClick={() => setActiveFilters([])}>Zurücksetzen</button>
                 <button type="button" className="rounded-xl bg-emerald-800 px-4 py-3 text-sm font-bold text-white" onClick={() => setFilterPanelOpen(false)}>Übernehmen</button>
@@ -250,13 +375,13 @@ function App() {
         </aside>
       )}
 
-      {selectedPlace && <PlaceCard place={selectedPlace} onClose={() => setSelectedPlace(null)} />}
+      {selectedPlace && <PlaceCard place={selectedPlace} onClose={() => setSelectedPlaceId(null)} />}
     </main>
   );
 }
 
 function PlaceCard({ place, onClose }: { place: Place; onClose: () => void }) {
-  const mapUrl = place.googleMapsUrl ?? `https://www.google.com/maps/search/?api=1&query=${place.coordinates[1]},${place.coordinates[0]}`;
+  const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${place.coordinates[1]},${place.coordinates[0]}`)}`;
   return (
     <aside className="absolute bottom-4 left-2 right-2 z-20 mx-auto max-w-md overflow-hidden rounded-2xl bg-white shadow-[0_18px_55px_rgba(18,54,45,.35)] md:bottom-6 md:left-2 md:right-auto md:w-[380px]">
       {place.imageUrl && <img src={place.imageUrl} alt="" className="h-44 w-full object-cover" />}
@@ -266,7 +391,7 @@ function PlaceCard({ place, onClose }: { place: Place; onClose: () => void }) {
         <h2 className="mb-2 mt-1 text-2xl font-extrabold tracking-tight text-emerald-950">{place.name}</h2>
         <p className="m-0 text-sm leading-6 text-slate-600">{descriptionFor(place)}</p>
         <div className="mt-3 flex flex-wrap gap-1.5">{place.features.map((feature) => <span key={feature} className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800">{feature}</span>)}</div>
-        <a className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-800 px-4 py-3 text-sm font-bold text-white no-underline hover:bg-emerald-900" href={mapUrl} target="_blank" rel="noreferrer"><MapPin size={17} /> In Google Maps öffnen</a>
+        <a className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-800 px-4 py-3 text-sm font-bold text-white no-underline hover:bg-emerald-900" href={mapUrl} target="_blank" rel="noreferrer"><MapPin size={17} /> Route in Google Maps planen</a>
       </div>
     </aside>
   );

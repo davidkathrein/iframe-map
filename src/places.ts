@@ -1,4 +1,4 @@
-export const CATEGORIES = [
+export const FEATURES = [
   "Gewässer",
   "Schatten",
   "Park & Ruhe",
@@ -18,14 +18,16 @@ export const ICON_KINDS = [
 ] as const;
 
 export const FILTERS = [
-  { id: "nature", label: "Wald & Natur", categories: ["Wald & Natur"] },
-  { id: "water", label: "Gewässer", categories: ["Gewässer"] },
-  { id: "shade", label: "Schatten", categories: ["Schatten"] },
-  { id: "rest", label: "Park & Ruhe", categories: ["Park & Ruhe"] },
-  { id: "other", label: "Sonstige", categories: ["Aussicht & Höhe", "Familie & Spiel", "Geschichte & Kultur"] },
-] as const satisfies ReadonlyArray<{ id: string; label: string; categories: readonly Category[] }>;
+  { id: "water", label: "Gewässer", features: ["Gewässer"] },
+  { id: "shade", label: "Schatten", features: ["Schatten"] },
+  { id: "rest", label: "Park & Ruhe", features: ["Park & Ruhe"] },
+  { id: "nature", label: "Wald & Natur", features: ["Wald & Natur"] },
+  { id: "height", label: "Aussicht & Höhe", features: ["Aussicht & Höhe"] },
+  { id: "family", label: "Familie & Spiel", features: ["Familie & Spiel"] },
+  { id: "culture", label: "Geschichte & Kultur", features: ["Geschichte & Kultur"] },
+] as const satisfies ReadonlyArray<{ id: string; label: string; features: readonly PlaceFeature[] }>;
 
-export type Category = (typeof CATEGORIES)[number];
+export type PlaceFeature = (typeof FEATURES)[number];
 export type Filter = (typeof FILTERS)[number]["id"];
 export type IconKind = (typeof ICON_KINDS)[number];
 
@@ -34,7 +36,7 @@ export type PlaceRecord = {
   municipality: string;
   name: string;
   icon: IconKind;
-  features: Category[];
+  features: PlaceFeature[];
   geometry?: "point" | "area";
   description?: string;
   imageUrl?: string;
@@ -71,13 +73,17 @@ function hash(value: string) {
   return Array.from(value).reduce((sum, char) => ((sum * 31 + char.charCodeAt(0)) >>> 0), 7);
 }
 
+export function roundCoordinates([longitude, latitude]: [number, number]): [number, number] {
+  return [Number(longitude.toFixed(6)), Number(latitude.toFixed(6))];
+}
+
 export function createPlaceId(place: Pick<PlaceRecord, "municipality" | "name">) {
   const slug = `${place.municipality}-${place.name}`
     .normalize("NFD")
-    .replaceAll(/[\u0300-\u036f]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, "-")
-    .replaceAll(/^-|-$/g, "");
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
   return slug || `ort-${crypto.randomUUID()}`;
 }
 
@@ -87,7 +93,47 @@ export function coordinatesForPlace(place: PlaceRecord): [number, number] {
   const seed = hash(`${place.municipality}-${place.name}`);
   const longitudeOffset = ((seed % 1000) / 1000 - 0.5) * 0.018;
   const latitudeOffset = (((seed >>> 10) % 1000) / 1000 - 0.5) * 0.012;
-  return [longitude + longitudeOffset, latitude + latitudeOffset];
+  return roundCoordinates([longitude + longitudeOffset, latitude + latitudeOffset]);
+}
+
+export function isCoordinatePair(value: unknown): value is [number, number] {
+  return Array.isArray(value)
+    && value.length === 2
+    && value.every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate))
+    && value[0] >= -180 && value[0] <= 180
+    && value[1] >= -90 && value[1] <= 90;
+}
+
+export function isClosedPolygon(value: unknown): value is [number, number][] {
+  if (!Array.isArray(value) || value.length < 4 || value.length > 500 || !value.every(isCoordinatePair)) {
+    return false;
+  }
+  const first = value[0];
+  const last = value[value.length - 1];
+  if (first[0] !== last[0] || first[1] !== last[1]) return false;
+
+  const vertices = value.slice(0, -1);
+  if (new Set(vertices.map(([longitude, latitude]) => `${longitude},${latitude}`)).size < 3) return false;
+  const twiceArea = vertices.reduce((area, [longitude, latitude], index) => {
+    const [nextLongitude, nextLatitude] = vertices[(index + 1) % vertices.length];
+    return area + longitude * nextLatitude - nextLongitude * latitude;
+  }, 0);
+  return Math.abs(twiceArea) > 1e-12;
+}
+
+export function polygonForPlace(place: PlaceRecord): [number, number][] {
+  if (place.polygon && place.polygon.length >= 4) return place.polygon;
+
+  const [longitude, latitude] = coordinatesForPlace(place);
+  const horizontal = 0.009;
+  const vertical = 0.005;
+  return [
+    [longitude - horizontal, latitude - vertical],
+    [longitude + horizontal, latitude - vertical * 0.6],
+    [longitude + horizontal * 0.65, latitude + vertical],
+    [longitude - horizontal * 0.7, latitude + vertical * 0.7],
+    [longitude - horizontal, latitude - vertical],
+  ].map((coordinate) => roundCoordinates(coordinate as [number, number]));
 }
 
 export function normalizePlaces(records: PlaceRecord[]): Place[] {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ClipboardEvent, type FormEvent } from "react";
+import { useEffect, useId, useMemo, useState, type FormEvent } from "react";
 import type { Feature, Polygon } from "geojson";
 import {
   AlertCircle,
@@ -24,13 +24,16 @@ import {
   useMap,
 } from "@/components/ui/map";
 import {
-  CATEGORIES,
+  FEATURES,
   ICON_KINDS,
   coordinatesForPlace,
   createPlaceId,
   normalizePlaces,
+  polygonForPlace,
+  roundCoordinates,
   type PlaceRecord,
 } from "./places";
+import { updateCoordinateFromInput, type CoordinateAxis } from "./coordinate-input";
 
 type PlacesResponse = {
   places: PlaceRecord[];
@@ -48,39 +51,6 @@ const iconLabels = {
   family: "Familie & Spiel",
   culture: "Geschichte & Kultur",
 } as const;
-
-function parsePastedCoordinates(value: string): [number, number] | null {
-  const matches = value.trim().match(/[+-]?(?:\d+(?:\.\d+)?|\.\d+)/g);
-  if (matches?.length !== 2) return null;
-
-  const [latitude, longitude] = matches.map(Number);
-  if (
-    !Number.isFinite(latitude)
-    || !Number.isFinite(longitude)
-    || Math.abs(latitude) > 90
-    || Math.abs(longitude) > 180
-  ) return null;
-
-  return [longitude, latitude];
-}
-
-function defaultPolygon([longitude, latitude]: [number, number]): [number, number][] {
-  const horizontal = 0.003;
-  const vertical = 0.002;
-  return [
-    [longitude - horizontal, latitude - vertical],
-    [longitude + horizontal, latitude - vertical],
-    [longitude + horizontal, latitude + vertical],
-    [longitude - horizontal, latitude + vertical],
-    [longitude - horizontal, latitude - vertical],
-  ];
-}
-
-function polygonForPlace(place: PlaceRecord): [number, number][] {
-  return place.polygon && place.polygon.length >= 4
-    ? place.polygon
-    : defaultPolygon(coordinatesForPlace(place));
-}
 
 async function responseJson<T>(response: Response): Promise<T> {
   const body = await response.json().catch(() => ({})) as T & { error?: string };
@@ -128,7 +98,7 @@ function Login({ onSuccess }: { onSuccess: () => void }) {
           autoFocus
           required
         />
-        {error && <div className="admin-error"><AlertCircle size={16} />{error}</div>}
+        {error && <div className="admin-error" role="alert"><AlertCircle size={16} />{error}</div>}
         <button className="admin-primary-button" type="submit" disabled={submitting}>
           {submitting ? <Loader2 className="spin" size={18} /> : null}
           Anmelden
@@ -173,7 +143,7 @@ function EditorMap({
 
   return (
     <div className="admin-map">
-      <Map center={selectedCoordinates} zoom={13} minZoom={8} maxZoom={18} theme="light" attributionControl={{ compact: true }}>
+      <Map ariaLabel="Karte zum Bearbeiten der Ortsposition" center={selectedCoordinates} zoom={13} minZoom={8} maxZoom={18} theme="light" attributionControl={{ compact: true }}>
         <MapFocus place={selected} />
         {selectedArea && (
           <MapGeoJSON
@@ -249,21 +219,6 @@ function PlaceForm({
   const coordinates = coordinatesForPlace(place);
   const hasExactCoordinates = Boolean(place.coordinates);
 
-  const setCoordinate = (index: 0 | 1, value: string) => {
-    const number = Number(value);
-    if (!Number.isFinite(number)) return;
-    const next: [number, number] = [...coordinates];
-    next[index] = number;
-    onChange({ coordinates: next });
-  };
-
-  const pasteCoordinates = (event: ClipboardEvent<HTMLInputElement>) => {
-    const next = parsePastedCoordinates(event.clipboardData.getData("text"));
-    if (!next) return;
-    event.preventDefault();
-    onChange({ coordinates: next });
-  };
-
   return (
     <div className="admin-form">
       <div className="admin-form-heading">
@@ -274,7 +229,7 @@ function PlaceForm({
           </span>
           <h2>{place.name || "Neuer Ort"}</h2>
         </div>
-        <button className="admin-icon-button danger" type="button" onClick={onDelete} title="Ort löschen"><Trash2 size={18} /></button>
+        <button className="admin-icon-button danger" type="button" onClick={onDelete} aria-label="Ort löschen" title="Ort löschen"><Trash2 size={18} /></button>
       </div>
 
       <div className="admin-field-grid">
@@ -289,10 +244,10 @@ function PlaceForm({
       </div>
 
       <label>
-        <span>Kurzbeschreibung <small>{place.description?.length ?? 0}/500</small></span>
+          <span>Kurzbeschreibung <small>{place.description?.length ?? 0}/250</small></span>
         <textarea
           value={place.description ?? ""}
-          maxLength={500}
+          maxLength={250}
           rows={4}
           placeholder="Was macht diesen Ort besonders?"
           onChange={(event) => onChange({ description: event.target.value || undefined })}
@@ -313,7 +268,7 @@ function PlaceForm({
             onChange={(event) => {
               const geometry = event.target.value as "point" | "area";
               onChange(geometry === "area" && !place.polygon
-                ? { geometry, polygon: defaultPolygon(coordinates) }
+                ? { geometry, polygon: polygonForPlace(place) }
                 : { geometry });
             }}
           >
@@ -326,7 +281,7 @@ function PlaceForm({
       <fieldset>
         <legend>Merkmale</legend>
         <div className="admin-feature-grid">
-          {CATEGORIES.map((feature) => (
+          {FEATURES.map((feature) => (
             <label className="admin-checkbox" key={feature}>
               <input
                 type="checkbox"
@@ -344,28 +299,7 @@ function PlaceForm({
         </div>
       </fieldset>
 
-      <div className="admin-field-grid">
-        <label>
-          <span>Längengrad</span>
-          <input
-            type="number"
-            step="0.000001"
-            value={coordinates[0]}
-            onChange={(event) => setCoordinate(0, event.target.value)}
-            onPaste={pasteCoordinates}
-          />
-        </label>
-        <label>
-          <span>Breitengrad</span>
-          <input
-            type="number"
-            step="0.000001"
-            value={coordinates[1]}
-            onChange={(event) => setCoordinate(1, event.target.value)}
-            onPaste={pasteCoordinates}
-          />
-        </label>
-      </div>
+      <CoordinateFields coordinates={coordinates} onChange={(next) => onChange({ coordinates: next })} />
 
       <GoogleMapsField key={place.id} place={place} onChange={onChange} />
 
@@ -379,6 +313,80 @@ function PlaceForm({
         <p className="admin-hint">Jeden Eckpunkt der Fläche direkt auf der Karte ziehen. Die Fläche wird beim Speichern mit allen Punkten übernommen.</p>
       )}
     </div>
+  );
+}
+
+function CoordinateFields({
+  coordinates,
+  onChange,
+}: {
+  coordinates: [number, number];
+  onChange: (coordinates: [number, number]) => void;
+}) {
+  const [longitudeDraft, setLongitudeDraft] = useState(String(coordinates[0]));
+  const [latitudeDraft, setLatitudeDraft] = useState(String(coordinates[1]));
+  const [errorAxis, setErrorAxis] = useState<CoordinateAxis | null>(null);
+  const errorId = useId();
+
+  useEffect(() => {
+    setLongitudeDraft(String(coordinates[0]));
+    setLatitudeDraft(String(coordinates[1]));
+    setErrorAxis(null);
+  }, [coordinates[0], coordinates[1]]);
+
+  const commit = (axis: CoordinateAxis, value: string) => {
+    const next = updateCoordinateFromInput(coordinates, axis, value);
+    if (!next) {
+      setErrorAxis(axis);
+      if (axis === "longitude") setLongitudeDraft(String(coordinates[0]));
+      else setLatitudeDraft(String(coordinates[1]));
+      return;
+    }
+    setErrorAxis(null);
+    onChange(next);
+  };
+
+  return (
+    <>
+      <div className="admin-field-grid">
+        <label>
+          <span>Längengrad</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            name="longitude"
+            autoComplete="off"
+            spellCheck={false}
+            value={longitudeDraft}
+            aria-invalid={errorAxis === "longitude"}
+            aria-describedby={errorAxis === "longitude" ? errorId : undefined}
+            onChange={(event) => setLongitudeDraft(event.target.value)}
+            onBlur={() => commit("longitude", longitudeDraft)}
+            onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+          />
+        </label>
+        <label>
+          <span>Breitengrad</span>
+          <input
+            type="text"
+            inputMode="decimal"
+            name="latitude"
+            autoComplete="off"
+            spellCheck={false}
+            value={latitudeDraft}
+            aria-invalid={errorAxis === "latitude"}
+            aria-describedby={errorAxis === "latitude" ? errorId : undefined}
+            onChange={(event) => setLatitudeDraft(event.target.value)}
+            onBlur={() => commit("latitude", latitudeDraft)}
+            onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+          />
+        </label>
+      </div>
+      {errorAxis && <p id={errorId} className="admin-coordinate-error" role="alert">
+        <AlertCircle size={14} />
+        {errorAxis === "longitude" ? "Ungültiger Längengrad (−180 bis 180)." : "Ungültiger Breitengrad (−90 bis 90)."}
+      </p>}
+    </>
   );
 }
 
@@ -446,7 +454,7 @@ function GoogleMapsField({
           {resolving ? "Wird ermittelt…" : "Koordinaten übernehmen"}
         </button>
       </div>
-      {notice && <p className={`admin-inline-notice ${notice.kind}`}>
+      {notice && <p className={`admin-inline-notice ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"}>
         {notice.kind === "success" ? <Check size={14} /> : <AlertCircle size={14} />}
         {notice.text}
       </p>}
@@ -495,7 +503,7 @@ function ImageUpload({
       {imageUrl ? (
         <div className="admin-image-preview">
           <img src={imageUrl} alt="" />
-          <button type="button" onClick={() => onChange(undefined)} title="Bild aus dem Ortseintrag entfernen">
+          <button type="button" onClick={() => onChange(undefined)} aria-label="Bild aus dem Ortseintrag entfernen" title="Bild aus dem Ortseintrag entfernen">
             <X size={17} />
           </button>
         </div>
@@ -517,8 +525,8 @@ function ImageUpload({
           event.target.value = "";
         }}
       />
-      {imageUrl && <p className="admin-upload-success"><Check size={14} />Bild hochgeladen – Ort noch speichern.</p>}
-      {error && <p className="admin-upload-error"><AlertCircle size={14} />{error}</p>}
+      {imageUrl && <p className="admin-upload-success" role="status"><Check size={14} />Bild hochgeladen – Ort noch speichern.</p>}
+      {error && <p className="admin-upload-error" role="alert"><AlertCircle size={14} />{error}</p>}
     </section>
   );
 }
@@ -555,6 +563,7 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
     const warn = (event: BeforeUnloadEvent) => {
       if (!dirty) return;
       event.preventDefault();
+      event.returnValue = true;
     };
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
@@ -576,7 +585,7 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
   const moveSelectedVertex = (index: number, coordinates: [number, number]) => {
     if (!selected) return;
     const polygon = [...polygonForPlace(selected)];
-    polygon[index] = coordinates;
+    polygon[index] = roundCoordinates(coordinates);
     polygon[polygon.length - 1] = polygon[0];
     changeSelected({ polygon });
   };
@@ -628,8 +637,12 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
 
   const logout = async () => {
     if (dirty && !window.confirm("Ungespeicherte Änderungen verwerfen und abmelden?")) return;
-    await fetch("/api/session", { method: "DELETE" });
-    onLoggedOut();
+    try {
+      await responseJson(await fetch("/api/session", { method: "DELETE" }));
+      onLoggedOut();
+    } catch (caught) {
+      setNotice({ kind: "error", text: caught instanceof Error ? caught.message : "Abmelden fehlgeschlagen." });
+    }
   };
 
   return (
@@ -640,7 +653,7 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
           <h1>Datenpflege</h1>
         </div>
         <div className="admin-header-actions">
-          {notice && <div className={`admin-notice ${notice.kind}`}>{notice.kind === "success" ? <Check size={16} /> : <AlertCircle size={16} />}{notice.text}</div>}
+          {notice && <div className={`admin-notice ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.kind === "success" ? <Check size={16} /> : <AlertCircle size={16} />}{notice.text}</div>}
           <a className="admin-secondary-button" href="/"><ChevronLeft size={17} /> Karte</a>
           <button className="admin-secondary-button" type="button" onClick={logout}><LogOut size={17} /> Abmelden</button>
           <button className="admin-primary-button compact" type="button" onClick={save} disabled={!dirty || saving || loading}>
@@ -651,13 +664,13 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
       </header>
 
       {loading ? (
-        <div className="admin-loading"><Loader2 className="spin" size={24} />Orte werden geladen…</div>
+        <div className="admin-loading" role="status"><Loader2 className="spin" size={24} />Orte werden geladen…</div>
       ) : (
         <div className="admin-workspace">
           <aside className="admin-sidebar">
             <div className="admin-search">
               <Search size={17} />
-              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Ort oder Gemeinde suchen" />
+              <input aria-label="Ort oder Gemeinde suchen" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Ort oder Gemeinde suchen" />
             </div>
             <button className="admin-add-button" type="button" onClick={addPlace}><Plus size={17} />Neuen Ort anlegen</button>
             <div className="admin-place-count">{filteredPlaces.length} von {places.length} Orten</div>
@@ -682,7 +695,7 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
                 places={places}
                 selected={selected}
                 onSelect={setSelectedId}
-                onMove={(coordinates) => changeSelected({ coordinates })}
+                onMove={(coordinates) => changeSelected({ coordinates: roundCoordinates(coordinates) })}
                 onMoveVertex={moveSelectedVertex}
               />
               <PlaceForm place={selected} onChange={changeSelected} onDelete={deleteSelected} />

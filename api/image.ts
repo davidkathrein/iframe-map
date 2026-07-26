@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { put } from "@vercel/blob";
 import { isAuthenticated, isSameOrigin } from "../server/auth.js";
+import { hasValidImageSignature, type SupportedImageType } from "../server/images.js";
 
 const jsonHeaders = { "Content-Type": "application/json", "Cache-Control": "no-store" };
 const MAX_IMAGE_BYTES = 4_000_000;
@@ -38,6 +39,10 @@ export async function POST(request: Request) {
     if (value.size === 0 || value.size > MAX_IMAGE_BYTES) {
       return json({ error: "Das Bild darf höchstens 4 MB groß sein." }, { status: 400 });
     }
+    const signature = new Uint8Array(await value.slice(0, 12).arrayBuffer());
+    if (!hasValidImageSignature(value.type as SupportedImageType, signature)) {
+      return json({ error: "Die Datei enthält kein gültiges Bild im gewählten Format." }, { status: 400 });
+    }
 
     const pathname = `places/images/${new Date().toISOString().slice(0, 10)}/${randomUUID()}.${extension}`;
     const blob = await put(pathname, value, {
@@ -54,4 +59,3 @@ export async function POST(request: Request) {
     return json({ error: "Bild konnte nicht hochgeladen werden." }, { status: 500 });
   }
 }
-
