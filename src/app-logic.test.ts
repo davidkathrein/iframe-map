@@ -6,6 +6,7 @@ import {
   recordFailedLogin,
 } from "../server/auth.ts";
 import { hasValidImageSignature } from "../server/images.ts";
+import { etagForConditionalWrite } from "./blob-etag.ts";
 import {
   FEATURES,
   FILTERS,
@@ -97,6 +98,14 @@ test("Same-Origin-Prüfung lehnt andere Protokolle und kaputte Origins ab", () =
   assert.equal(isSameOrigin(new Request("https://example.com/api", { headers: { origin: "https://example.com" } })), true);
   assert.equal(isSameOrigin(new Request("https://example.com/api", { headers: { origin: "http://example.com" } })), false);
   assert.equal(isSameOrigin(new Request("https://example.com/api", { headers: { origin: "kein-url" } })), false);
+});
+
+test("schwache Blob-ETags werden für bedingte Schreibzugriffe verstärkt", () => {
+  assert.equal(
+    etagForConditionalWrite('W/"439c6db081c3e1e3d4a366b2cc63ca2c"'),
+    '"439c6db081c3e1e3d4a366b2cc63ca2c"',
+  );
+  assert.equal(etagForConditionalWrite('"bereits-stark"'), '"bereits-stark"');
 });
 
 test("wiederholte fehlgeschlagene Logins werden gedrosselt", () => {

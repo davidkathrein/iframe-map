@@ -10,6 +10,7 @@ import {
   type PlaceRecord,
 } from "../src/places.js";
 import { isGoogleMapsUrl } from "./google-maps.js";
+import { etagForConditionalWrite } from "../src/blob-etag.js";
 
 const CURRENT_PATH = "data/places.json";
 const MAX_PLACES = 500;
@@ -81,7 +82,7 @@ export async function writePlaces(places: unknown, expectedRevision: unknown) {
     allowOverwrite: Boolean(current),
     contentType: "application/json",
     cacheControlMaxAge: 60,
-    ...(current ? { ifMatch: current.blob.etag } : {}),
+    ...(current ? { ifMatch: etagForConditionalWrite(current.blob.etag) } : {}),
     ...storageOptions(),
   });
 
