@@ -168,6 +168,53 @@ function FilterAutoZoom({
   return null;
 }
 
+function SelectedPlaceAutoZoom({
+  place,
+  revision,
+}: {
+  place: Place | null;
+  revision: number;
+}) {
+  const { map, isLoaded } = useMap();
+  const handledRevisionRef = useRef(0);
+
+  useEffect(() => {
+    if (!map || !isLoaded || !place || revision === 0 || handledRevisionRef.current === revision) return;
+    handledRevisionRef.current = revision;
+
+    const duration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 700;
+    const mobile = map.getContainer().clientWidth < 680;
+    map.stop();
+
+    if (place.geometry === "point") {
+      map.flyTo({
+        center: place.coordinates,
+        zoom: Math.min(15, map.getMaxZoom()),
+        offset: [0, mobile ? -80 : -20],
+        duration,
+        essential: false,
+      });
+      return;
+    }
+
+    const coordinates = coordinatesForPlacesBounds([place]);
+    const bounds = coordinates.slice(1).reduce(
+      (currentBounds, coordinate) => currentBounds.extend(coordinate),
+      new MapLibreGL.LngLatBounds(coordinates[0], coordinates[0]),
+    );
+    map.fitBounds(bounds, {
+      padding: mobile
+        ? { top: 72, right: 36, bottom: 300, left: 36 }
+        : { top: 72, right: 72, bottom: 72, left: 420 },
+      maxZoom: 14,
+      duration,
+      essential: false,
+    });
+  }, [isLoaded, map, place, revision]);
+
+  return null;
+}
+
 function MarkerLayer({ items, onSelect }: { items: Place[]; onSelect: (place: Place) => void }) {
   const { map } = useMap();
   const [zoom, setZoom] = useState(9);
@@ -406,6 +453,7 @@ function App() {
   const [activeFilters, setActiveFilters] = useState<Filter[]>([]);
   const [filterRevision, setFilterRevision] = useState(0);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
+  const [placeSelectionRevision, setPlaceSelectionRevision] = useState(0);
   const [infoOpen, setInfoOpen] = useState(false);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const filterButtonRef = useRef<HTMLButtonElement>(null);
@@ -481,6 +529,7 @@ function App() {
   const selectPlace = (place: Place) => setSelectedPlaceId(place.id);
   const selectPlaceFromPanel = (place: Place) => {
     selectPlace(place);
+    setPlaceSelectionRevision((current) => current + 1);
     setFilterPanelOpen(false);
   };
   const toggleFilter = (filter: Filter) => {
@@ -498,6 +547,7 @@ function App() {
       <Map ariaLabel="Karte der kühlen Orte im Walgau" center={[9.72, 47.2]} zoom={9.3} minZoom={8} maxZoom={16} theme="light" attributionControl={false}>
         <AdaptiveAttribution />
         <FilterAutoZoom places={visiblePlaces} revision={filterRevision} filterPanelOpen={filterPanelOpen} />
+        <SelectedPlaceAutoZoom place={selectedPlace} revision={placeSelectionRevision} />
         <MapGeoJSON
           data={visibleAreas}
           id="cool-place-areas"
