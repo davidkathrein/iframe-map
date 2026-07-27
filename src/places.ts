@@ -145,6 +145,12 @@ export function normalizePlaces(records: PlaceRecord[]): Place[] {
   }));
 }
 
+export function coordinatesForPlacesBounds(places: readonly Place[]) {
+  return places.flatMap((place) => (
+    place.geometry === "area" ? polygonForPlace(place) : [place.coordinates]
+  ));
+}
+
 function normalizeSearchText(value: string) {
   return value
     .normalize("NFD")
