@@ -37,6 +37,7 @@ import {
   type Place,
   type PlaceRecord,
 } from "./places";
+import { usePresenceValue } from "./use-presence-value";
 
 function areaGeometry(place: Place): Feature<Polygon, { id: string }> {
   return {
@@ -483,6 +484,9 @@ function App() {
     () => visiblePlaces.find((place) => place.id === selectedPlaceId) ?? null,
     [selectedPlaceId, visiblePlaces],
   );
+  const placePresence = usePresenceValue(selectedPlace, 240);
+  const filterPresence = usePresenceValue(filterPanelOpen ? true : null, 280);
+  const infoPresence = usePresenceValue(infoOpen ? true : null, 200);
   const visibleAreas = useMemo<FeatureCollection<Polygon, { id: string }>>(
     () => ({ type: "FeatureCollection", features: visiblePlaces.filter((place) => place.geometry === "area").map(areaGeometry) }),
     [visiblePlaces],
@@ -589,9 +593,12 @@ function App() {
         Filter{activeFilters.length > 0 && ` · ${activeFilters.length}`}
       </button>
 
-      {filterPanelOpen && (
+      {filterPresence.renderedValue !== null && (
         <>
-          <div className="absolute right-2 top-[4.75rem] z-20 hidden w-[360px] rounded-2xl border border-white/70 bg-white/95 p-4 shadow-[0_12px_32px_rgba(19,57,47,.2)] backdrop-blur lg:block md:top-[5.25rem]">
+          <div
+            className="filter-popover absolute right-2 top-[4.75rem] z-20 hidden w-[360px] rounded-2xl border border-white/70 bg-white/95 p-4 shadow-[0_12px_32px_rgba(19,57,47,.2)] backdrop-blur lg:block md:top-[5.25rem]"
+            data-state={filterPresence.visible ? "open" : "closed"}
+          >
             <div className="mb-3 flex items-center justify-between gap-3">
               <h2 className="m-0 text-base font-extrabold text-emerald-950">Orte filtern</h2>
               {activeFilters.length > 0 && <button type="button" className="text-sm font-semibold text-emerald-800 underline" onClick={resetFilters}>Zurücksetzen</button>}
@@ -600,9 +607,25 @@ function App() {
             <PlaceSelect places={visiblePlaces} selectedId={selectedPlaceId} onSelect={selectPlaceFromPanel} />
           </div>
 
-          <div ref={mobileFilterDialogRef} className="fixed inset-0 z-30 lg:hidden" role="dialog" aria-modal="true" aria-label="Orte filtern">
-            <div className="absolute inset-0 bg-slate-950/25" aria-hidden="true" onClick={() => setFilterPanelOpen(false)} />
-            <section className="absolute inset-x-0 bottom-0 max-h-[calc(100%-1rem)] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl">
+          <div
+            ref={mobileFilterDialogRef}
+            className="filter-dialog fixed inset-0 z-30 lg:hidden"
+            data-state={filterPresence.visible ? "open" : "closed"}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Orte filtern"
+            aria-hidden={!filterPresence.visible}
+          >
+            <div
+              className="filter-backdrop absolute inset-0 bg-slate-950/25"
+              data-state={filterPresence.visible ? "open" : "closed"}
+              aria-hidden="true"
+              onClick={() => setFilterPanelOpen(false)}
+            />
+            <section
+              className="filter-sheet absolute inset-x-0 bottom-0 max-h-[calc(100%-1rem)] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl"
+              data-state={filterPresence.visible ? "open" : "closed"}
+            >
               <div className="mb-5 flex items-center justify-between gap-3">
                 <h2 className="m-0 text-lg font-extrabold text-emerald-950">Orte filtern</h2>
                 <button ref={mobileFilterCloseRef} type="button" className="rounded-full p-2 text-slate-500 hover:bg-slate-100" aria-label="Filter schließen" onClick={() => setFilterPanelOpen(false)}><X size={19} /></button>
@@ -618,23 +641,36 @@ function App() {
         </>
       )}
 
-      {infoOpen && (
-        <aside className="absolute left-2 top-[4.9rem] z-20 w-[min(360px,calc(100%-2rem))] rounded-2xl bg-white p-5 shadow-2xl md:top-[5.25rem]">
+      {infoPresence.renderedValue !== null && (
+        <aside
+          className="info-popover absolute left-2 top-[4.9rem] z-20 w-[min(360px,calc(100%-2rem))] rounded-2xl bg-white p-5 shadow-2xl md:top-[5.25rem]"
+          data-state={infoPresence.visible ? "open" : "closed"}
+          aria-hidden={!infoPresence.visible}
+        >
           <button className="absolute right-3 top-3 rounded-full p-2 text-slate-500 hover:bg-slate-100" aria-label="Hinweise schließen" onClick={() => setInfoOpen(false)}><X size={18} /></button>
           <h2 className="m-0 pr-8 text-lg font-extrabold text-emerald-950">Gut unterwegs</h2>
           <p className="mb-0 mt-2 text-sm leading-6 text-slate-600">Bitte nimm Rücksicht auf Natur, Anrainer:innen und geltende Zutrittsregeln. Die Orte laden zum verantwortungsvollen Entdecken ein.</p>
         </aside>
       )}
 
-      {selectedPlace && <PlaceCard place={selectedPlace} onClose={() => setSelectedPlaceId(null)} />}
+      {placePresence.renderedValue && (
+        <PlaceCard
+          place={placePresence.renderedValue}
+          visible={placePresence.visible}
+          onClose={() => setSelectedPlaceId(null)}
+        />
+      )}
     </main>
   );
 }
 
-function PlaceCard({ place, onClose }: { place: Place; onClose: () => void }) {
+function PlaceCard({ place, visible, onClose }: { place: Place; visible: boolean; onClose: () => void }) {
   const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(`${place.coordinates[1]},${place.coordinates[0]}`)}`;
   return (
-    <aside className="absolute bottom-4 left-2 right-2 z-20 mx-auto max-w-md overflow-hidden rounded-2xl bg-white shadow-[0_18px_55px_rgba(18,54,45,.35)] md:bottom-6 md:left-2 md:right-auto md:w-[380px]">
+    <aside
+      className="place-card absolute bottom-4 left-2 right-2 z-20 mx-auto max-w-md overflow-hidden rounded-2xl bg-white shadow-[0_18px_55px_rgba(18,54,45,.35)] md:bottom-6 md:left-2 md:right-auto md:w-[380px]"
+      data-state={visible ? "open" : "closed"}
+    >
       {place.imageUrl && <img src={place.imageUrl} alt="" className="h-44 w-full object-cover" />}
       <div className="p-5">
         <button className="absolute right-3 top-3 rounded-full bg-white/90 p-2 text-slate-600 shadow hover:bg-white" aria-label="Ortskarte schließen" onClick={onClose}><X size={18} /></button>

@@ -34,6 +34,7 @@ import {
   type PlaceRecord,
 } from "./places";
 import { updateCoordinateFromInput, type CoordinateAxis } from "./coordinate-input";
+import { usePresenceValue } from "./use-presence-value";
 
 type PlacesResponse = {
   places: PlaceRecord[];
@@ -540,6 +541,7 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState<Notice>(null);
+  const noticePresence = usePresenceValue(notice, 200);
 
   const load = async () => {
     setLoading(true);
@@ -653,7 +655,17 @@ function Editor({ onLoggedOut }: { onLoggedOut: () => void }) {
           <h1>Datenpflege</h1>
         </div>
         <div className="admin-header-actions">
-          {notice && <div className={`admin-notice ${notice.kind}`} role={notice.kind === "error" ? "alert" : "status"}>{notice.kind === "success" ? <Check size={16} /> : <AlertCircle size={16} />}{notice.text}</div>}
+          {noticePresence.renderedValue && (
+            <div
+              className={`admin-notice ${noticePresence.renderedValue.kind}`}
+              role={noticePresence.renderedValue.kind === "error" ? "alert" : "status"}
+              data-state={noticePresence.visible ? "open" : "closed"}
+              aria-hidden={!noticePresence.visible}
+            >
+              {noticePresence.renderedValue.kind === "success" ? <Check size={16} /> : <AlertCircle size={16} />}
+              {noticePresence.renderedValue.text}
+            </div>
+          )}
           <a className="admin-secondary-button" href="/"><ChevronLeft size={17} /> Karte</a>
           <button className="admin-secondary-button" type="button" onClick={logout}><LogOut size={17} /> Abmelden</button>
           <button className="admin-primary-button compact" type="button" onClick={save} disabled={!dirty || saving || loading}>
