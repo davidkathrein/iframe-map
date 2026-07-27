@@ -1,12 +1,15 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { Feature, FeatureCollection, Point, Polygon } from "geojson";
 import MapLibreGL from "maplibre-gl";
 import {
+  Check,
+  ChevronsUpDown,
   Info,
   Landmark,
   MapPin,
   Mountain,
   PersonStanding,
+  Search,
   SlidersHorizontal,
   TreePine,
   Trees,
@@ -26,6 +29,7 @@ import rawPlaces from "./data/places.json";
 import {
   FILTERS,
   normalizePlaces,
+  placeMatchesQuery,
   polygonForPlace,
   type Filter,
   type IconKind,
@@ -188,23 +192,145 @@ function PlaceSelect({
   selectedId: string | null;
   onSelect: (place: Place) => void;
 }) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const listboxId = useId();
+  const selectedPlace = places.find((place) => place.id === selectedId) ?? null;
+  const matchingPlaces = useMemo(
+    () => places.filter((place) => placeMatchesQuery(place, query)),
+    [places, query],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  const openList = () => {
+    if (open) return;
+    setQuery("");
+    const selectedIndex = places.findIndex((place) => place.id === selectedId);
+    setActiveIndex(Math.max(0, selectedIndex));
+    setOpen(true);
+  };
+  const selectMatchingPlace = (index: number) => {
+    const place = matchingPlaces[index];
+    if (!place) return;
+    setOpen(false);
+    setQuery("");
+    onSelect(place);
+  };
+  const activeOptionId = matchingPlaces[activeIndex]
+    ? `${listboxId}-option-${matchingPlaces[activeIndex].id}`
+    : undefined;
+
   return (
-    <label className="mt-4 block border-t border-slate-200 pt-4 text-sm font-bold text-emerald-950">
-      Ort direkt auswählen
-      <select
-        className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm font-medium text-slate-700"
-        value={selectedId ?? ""}
-        onChange={(event) => {
-          const place = places.find((candidate) => candidate.id === event.target.value);
-          if (place) onSelect(place);
-        }}
-      >
-        <option value="">{places.length} passende Orte</option>
-        {places.map((place) => (
-          <option key={place.id} value={place.id}>{place.name} · {place.municipality}</option>
-        ))}
-      </select>
-    </label>
+    <div ref={containerRef} className="relative mt-4 border-t border-slate-200 pt-4">
+      <label htmlFor={`${listboxId}-input`} className="block text-sm font-bold text-emerald-950">
+        Ort direkt auswählen
+      </label>
+      <div className="relative mt-2">
+        <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} aria-hidden="true" />
+        <input
+          id={`${listboxId}-input`}
+          type="search"
+          role="combobox"
+          autoComplete="off"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls={open ? listboxId : undefined}
+          aria-activedescendant={open ? activeOptionId : undefined}
+          className="w-full rounded-xl border border-slate-200 bg-white py-2.5 pl-9 pr-9 text-sm font-medium text-slate-700 outline-none transition focus:border-emerald-600 focus:ring-2 focus:ring-emerald-100"
+          placeholder={`${places.length} passende Orte durchsuchen`}
+          value={open ? query : selectedPlace ? `${selectedPlace.name} · ${selectedPlace.municipality}` : ""}
+          onFocus={openList}
+          onClick={openList}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setActiveIndex(0);
+            setOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              if (!open) {
+                openList();
+                return;
+              }
+              setActiveIndex((current) => Math.min(current + 1, Math.max(0, matchingPlaces.length - 1)));
+            } else if (event.key === "ArrowUp") {
+              event.preventDefault();
+              if (!open) {
+                openList();
+                return;
+              }
+              setActiveIndex((current) => Math.max(current - 1, 0));
+            } else if (event.key === "Home" && open) {
+              event.preventDefault();
+              setActiveIndex(0);
+            } else if (event.key === "End" && open) {
+              event.preventDefault();
+              setActiveIndex(Math.max(0, matchingPlaces.length - 1));
+            } else if (event.key === "Enter" && open) {
+              event.preventDefault();
+              selectMatchingPlace(activeIndex);
+            } else if (event.key === "Escape" && open) {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(false);
+              setQuery("");
+            }
+          }}
+          onBlur={(event) => {
+            if (!containerRef.current?.contains(event.relatedTarget)) setOpen(false);
+          }}
+        />
+        <ChevronsUpDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} aria-hidden="true" />
+      </div>
+
+      {open && (
+        <ul
+          id={listboxId}
+          role="listbox"
+          aria-label="Passende Orte"
+          className="absolute bottom-full left-0 right-0 z-40 mb-1 max-h-60 overflow-y-auto rounded-xl border border-slate-200 bg-white p-1 shadow-xl lg:bottom-auto lg:top-full lg:mb-0 lg:mt-1"
+        >
+          {matchingPlaces.length > 0 ? matchingPlaces.map((place, index) => (
+            <li
+              key={place.id}
+              id={`${listboxId}-option-${place.id}`}
+              role="option"
+              aria-selected={place.id === selectedId}
+              className={`flex cursor-pointer items-start gap-2 rounded-lg px-3 py-2 text-sm ${
+                index === activeIndex ? "bg-emerald-50 text-emerald-950" : "text-slate-700"
+              }`}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseMove={() => setActiveIndex(index)}
+              onClick={() => selectMatchingPlace(index)}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-semibold">{place.name}</span>
+                <span className="block truncate text-xs text-slate-500">{place.municipality}</span>
+              </span>
+              {place.id === selectedId && <Check className="mt-1 shrink-0 text-emerald-700" size={16} aria-hidden="true" />}
+            </li>
+          )) : (
+            <li className="px-3 py-4 text-center text-sm text-slate-500">
+              Kein passender Ort gefunden
+            </li>
+          )}
+        </ul>
+      )}
+      <span className="sr-only" aria-live="polite">
+        {open && `${matchingPlaces.length} ${matchingPlaces.length === 1 ? "Ort" : "Orte"} gefunden`}
+      </span>
+    </div>
   );
 }
 
@@ -263,7 +389,7 @@ function App() {
       if (!mobile || event.key !== "Tab") return;
       const focusable = Array.from(
         mobileFilterDialogRef.current?.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
         ) ?? [],
       );
       if (!focusable.length) return;
@@ -351,7 +477,7 @@ function App() {
 
           <div ref={mobileFilterDialogRef} className="fixed inset-0 z-30 lg:hidden" role="dialog" aria-modal="true" aria-label="Orte filtern">
             <div className="absolute inset-0 bg-slate-950/25" aria-hidden="true" onClick={() => setFilterPanelOpen(false)} />
-            <section className="absolute inset-x-0 bottom-0 rounded-t-3xl bg-white p-5 shadow-2xl">
+            <section className="absolute inset-x-0 bottom-0 max-h-[calc(100%-1rem)] overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl">
               <div className="mb-5 flex items-center justify-between gap-3">
                 <h2 className="m-0 text-lg font-extrabold text-emerald-950">Orte filtern</h2>
                 <button ref={mobileFilterCloseRef} type="button" className="rounded-full p-2 text-slate-500 hover:bg-slate-100" aria-label="Filter schließen" onClick={() => setFilterPanelOpen(false)}><X size={19} /></button>
