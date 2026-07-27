@@ -144,3 +144,16 @@ export function normalizePlaces(records: PlaceRecord[]): Place[] {
     geometry: place.geometry ?? "point",
   }));
 }
+
+function normalizeSearchText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("de");
+}
+
+export function placeMatchesQuery(place: Pick<PlaceRecord, "name" | "municipality">, query: string) {
+  const normalizedQuery = normalizeSearchText(query.trim());
+  if (!normalizedQuery) return true;
+  return normalizeSearchText(`${place.name} ${place.municipality}`).includes(normalizedQuery);
+}

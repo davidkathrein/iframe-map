@@ -10,6 +10,7 @@ import {
   FEATURES,
   FILTERS,
   isClosedPolygon,
+  placeMatchesQuery,
   polygonForPlace,
   type PlaceRecord,
 } from "./places.ts";
@@ -20,6 +21,19 @@ test("jedes Merkmal ist einzeln filterbar", () => {
     new Set(FILTERS.flatMap((filter) => filter.features)),
     new Set(FEATURES),
   );
+});
+
+test("Ortssuche findet Namen und Gemeinden unabhängig von Großschreibung und Umlauten", () => {
+  const place: PlaceRecord = {
+    municipality: "Göfis",
+    name: "Bugo Gärten",
+    icon: "nature",
+    features: ["Wald & Natur"],
+  };
+  assert.equal(placeMatchesQuery(place, "bugo"), true);
+  assert.equal(placeMatchesQuery(place, "GOFIS"), true);
+  assert.equal(placeMatchesQuery(place, "gärten gö"), true);
+  assert.equal(placeMatchesQuery(place, "Satteins"), false);
 });
 
 test("abgeleitete Flächen sind geschlossen und überall wiederverwendbar", () => {
