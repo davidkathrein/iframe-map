@@ -9,7 +9,9 @@ import { hasValidImageSignature } from "../server/images.ts";
 import {
   FEATURES,
   FILTERS,
+  coordinatesForPlacesBounds,
   isClosedPolygon,
+  normalizePlaces,
   placeMatchesQuery,
   polygonForPlace,
   type PlaceRecord,
@@ -34,6 +36,33 @@ test("Ortssuche findet Namen und Gemeinden unabhängig von Großschreibung und U
   assert.equal(placeMatchesQuery(place, "GOFIS"), true);
   assert.equal(placeMatchesQuery(place, "gärten gö"), true);
   assert.equal(placeMatchesQuery(place, "Satteins"), false);
+});
+
+test("Kartenrahmen berücksichtigt Punkte und vollständige Flächen", () => {
+  const point = normalizePlaces([{
+    municipality: "Göfis",
+    name: "Punkt",
+    icon: "nature",
+    features: ["Wald & Natur"],
+    coordinates: [9.6, 47.2],
+  }])[0];
+  const area = normalizePlaces([{
+    municipality: "Satteins",
+    name: "Fläche",
+    icon: "park",
+    features: ["Park & Ruhe"],
+    geometry: "area",
+    coordinates: [9.7, 47.2],
+    polygon: [[9.69, 47.19], [9.71, 47.19], [9.71, 47.21], [9.69, 47.19]],
+  }])[0];
+
+  assert.deepEqual(coordinatesForPlacesBounds([point, area]), [
+    [9.6, 47.2],
+    [9.69, 47.19],
+    [9.71, 47.19],
+    [9.71, 47.21],
+    [9.69, 47.19],
+  ]);
 });
 
 test("abgeleitete Flächen sind geschlossen und überall wiederverwendbar", () => {

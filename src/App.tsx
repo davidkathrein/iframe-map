@@ -28,6 +28,7 @@ import {
 import rawPlaces from "./data/places.json";
 import {
   FILTERS,
+  coordinatesForPlacesBounds,
   normalizePlaces,
   placeMatchesQuery,
   polygonForPlace,
@@ -97,8 +98,74 @@ function AdaptiveAttribution() {
   return null;
 }
 
-function descriptionFor(place: Place) {
-  return place.description ?? `${place.name} in ${place.municipality} – ein angenehmer Ort mit ${place.features.join(", ").toLowerCase()}.`;
+function FilterAutoZoom({
+  places,
+  revision,
+  filterPanelOpen,
+}: {
+  places: Place[];
+  revision: number;
+  filterPanelOpen: boolean;
+}) {
+  const { map, isLoaded } = useMap();
+  const handledRevisionRef = useRef(0);
+  const closedRevisionRef = useRef(0);
+
+  useEffect(() => {
+    if (!map || !isLoaded || revision === 0) return;
+    const needsInitialFit = handledRevisionRef.current !== revision;
+    const needsClosedFit = !filterPanelOpen && closedRevisionRef.current !== revision;
+    if (!needsInitialFit && !needsClosedFit) return;
+
+    handledRevisionRef.current = revision;
+    if (!filterPanelOpen) closedRevisionRef.current = revision;
+
+    const coordinates = coordinatesForPlacesBounds(places);
+    if (coordinates.length === 0) return;
+
+    const container = map.getContainer();
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const mobile = width < 1024;
+    const duration = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 700;
+    const padding = mobile
+      ? {
+          top: 72,
+          right: 36,
+          bottom: filterPanelOpen ? Math.min(360, Math.round(height * 0.45)) : 72,
+          left: 36,
+        }
+      : {
+          top: 64,
+          right: filterPanelOpen ? Math.min(410, Math.round(width * 0.38)) : 64,
+          bottom: 64,
+          left: 64,
+        };
+
+    if (coordinates.length === 1) {
+      map.flyTo({
+        center: coordinates[0],
+        zoom: Math.min(13, map.getMaxZoom()),
+        duration,
+        essential: false,
+      });
+      return;
+    }
+
+    const bounds = coordinates.slice(1).reduce(
+      (currentBounds, coordinate) => currentBounds.extend(coordinate),
+      new MapLibreGL.LngLatBounds(coordinates[0], coordinates[0]),
+    );
+    const maxZoom = places.length > 24 ? 10.5 : places.length > 12 ? 11.5 : 13;
+    map.fitBounds(bounds, {
+      padding,
+      maxZoom,
+      duration,
+      essential: false,
+    });
+  }, [filterPanelOpen, isLoaded, map, places, revision]);
+
+  return null;
 }
 
 function MarkerLayer({ items, onSelect }: { items: Place[]; onSelect: (place: Place) => void }) {
@@ -337,6 +404,7 @@ function PlaceSelect({
 function App() {
   const [places, setPlaces] = useState<Place[]>(() => normalizePlaces(rawPlaces as PlaceRecord[]));
   const [activeFilters, setActiveFilters] = useState<Filter[]>([]);
+  const [filterRevision, setFilterRevision] = useState(0);
   const [selectedPlaceId, setSelectedPlaceId] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
@@ -417,12 +485,19 @@ function App() {
   };
   const toggleFilter = (filter: Filter) => {
     setActiveFilters((current) => current.includes(filter) ? current.filter((item) => item !== filter) : [...current, filter]);
+    setFilterRevision((current) => current + 1);
+  };
+  const resetFilters = () => {
+    if (activeFilters.length === 0) return;
+    setActiveFilters([]);
+    setFilterRevision((current) => current + 1);
   };
 
   return (
     <main className="map-shell">
       <Map ariaLabel="Karte der kühlen Orte im Walgau" center={[9.72, 47.2]} zoom={9.3} minZoom={8} maxZoom={16} theme="light" attributionControl={false}>
         <AdaptiveAttribution />
+        <FilterAutoZoom places={visiblePlaces} revision={filterRevision} filterPanelOpen={filterPanelOpen} />
         <MapGeoJSON
           data={visibleAreas}
           id="cool-place-areas"
@@ -469,7 +544,7 @@ function App() {
           <div className="absolute right-2 top-[4.75rem] z-20 hidden w-[360px] rounded-2xl border border-white/70 bg-white/95 p-4 shadow-[0_12px_32px_rgba(19,57,47,.2)] backdrop-blur lg:block md:top-[5.25rem]">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h2 className="m-0 text-base font-extrabold text-emerald-950">Orte filtern</h2>
-              {activeFilters.length > 0 && <button type="button" className="text-sm font-semibold text-emerald-800 underline" onClick={() => setActiveFilters([])}>Zurücksetzen</button>}
+              {activeFilters.length > 0 && <button type="button" className="text-sm font-semibold text-emerald-800 underline" onClick={resetFilters}>Zurücksetzen</button>}
             </div>
             <FilterOptions activeFilters={activeFilters} onToggle={toggleFilter} />
             <PlaceSelect places={visiblePlaces} selectedId={selectedPlaceId} onSelect={selectPlaceFromPanel} />
@@ -485,7 +560,7 @@ function App() {
               <FilterOptions activeFilters={activeFilters} onToggle={toggleFilter} />
               <PlaceSelect places={visiblePlaces} selectedId={selectedPlaceId} onSelect={selectPlaceFromPanel} />
               <div className="mt-6 grid grid-cols-2 gap-3">
-                <button type="button" className="rounded-xl border border-emerald-800 px-4 py-3 text-sm font-bold text-emerald-800" onClick={() => setActiveFilters([])}>Zurücksetzen</button>
+                <button type="button" className="rounded-xl border border-emerald-800 px-4 py-3 text-sm font-bold text-emerald-800" onClick={resetFilters}>Zurücksetzen</button>
                 <button type="button" className="rounded-xl bg-emerald-800 px-4 py-3 text-sm font-bold text-white" onClick={() => setFilterPanelOpen(false)}>Übernehmen</button>
               </div>
             </section>
@@ -515,7 +590,7 @@ function PlaceCard({ place, onClose }: { place: Place; onClose: () => void }) {
         <button className="absolute right-3 top-3 rounded-full bg-white/90 p-2 text-slate-600 shadow hover:bg-white" aria-label="Ortskarte schließen" onClick={onClose}><X size={18} /></button>
         <div className="flex items-center gap-2 text-sm font-bold text-emerald-700"><PlaceIcon icon={place.icon} size={16} /> {place.municipality}</div>
         <h2 className="mb-2 mt-1 text-2xl font-extrabold tracking-tight text-emerald-950">{place.name}</h2>
-        <p className="m-0 text-sm leading-6 text-slate-600">{descriptionFor(place)}</p>
+        {place.description && <p className="m-0 text-sm leading-6 text-slate-600">{place.description}</p>}
         <div className="mt-3 flex flex-wrap gap-1.5">{place.features.map((feature) => <span key={feature} className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-800">{feature}</span>)}</div>
         <a className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-800 px-4 py-3 text-sm font-bold text-white no-underline hover:bg-emerald-900" href={mapUrl} target="_blank" rel="noreferrer"><MapPin size={17} /> Route in Google Maps planen</a>
       </div>
